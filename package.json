@@ -1,0 +1,23 @@
+{
+  "name": "bulk-socmed",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Penjadwal video pendek otomatis ke YouTube Shorts, Instagram Reels, dan TikTok",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "dev:web": "pnpm --filter web dev",
+    "dev:worker": "pnpm --filter worker dev",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "clean": "pnpm -r exec -- rimraf dist .next *.tsbuildinfo"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "rimraf": "^5.0.0"
+  }
+}
