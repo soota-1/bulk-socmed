@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { encryptToken, decryptToken, parseEncryptionKey } from "../src/crypto.js";
+import { encryptToken, decryptToken, parseEncryptionKey } from "../src/crypto";
 
 describe("crypto — AES-256-GCM token encryption", () => {
   // 32-byte (64 hex characters) key

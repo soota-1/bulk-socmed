@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { planTargets } from "../src/planner.js";
+import { planTargets } from "../src/planner";
 
 describe("planTargets", () => {
   // dueAt = 2026-11-23T23:00:00Z (Senin 23 Nov 06:00 WIB)

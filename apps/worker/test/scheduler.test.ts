@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isTargetMissed } from "../src/scheduler.js";
+import { isTargetMissed } from "../src/scheduler";
 
 describe("scheduler — missed policy evaluation", () => {
   const now = new Date("2026-11-22T12:00:00Z");

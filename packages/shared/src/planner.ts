@@ -2,8 +2,8 @@ import { addMinutes, subDays } from "date-fns";
 import {
   DEFAULT_INSTAGRAM_PREPARE_LEAD_MINUTES,
   DEFAULT_TIKTOK_WINDOW_DAYS,
-} from "./constants.js";
-import type { Platform, PlannedTarget, PlannerOptions } from "./types.js";
+} from "./constants";
+import type { Platform, PlannedTarget, PlannerOptions } from "./types";
 
 /**
  * Calculate planned dispatch times for each platform target.

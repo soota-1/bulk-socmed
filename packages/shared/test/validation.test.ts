@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { UploadRequestSchema, PostCreateSchema } from "../src/validation.js";
+import { UploadRequestSchema, PostCreateSchema } from "../src/validation";
 
 describe("UploadRequestSchema", () => {
   it("accepts valid video upload request", () => {

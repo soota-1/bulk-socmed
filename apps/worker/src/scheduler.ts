@@ -1,8 +1,8 @@
 import { differenceInMinutes } from "date-fns";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { DEFAULT_GRACE_MINUTES } from "@bulk-socmed/shared";
-import type { WorkerConfig } from "./config.js";
-import { sendHeartbeat } from "./heartbeat.js";
+import type { WorkerConfig } from "./config";
+import { sendHeartbeat } from "./heartbeat";
 
 /**
  * Check whether a target's dueAt has passed beyond the allowable grace period.

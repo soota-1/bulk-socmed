@@ -1,6 +1,6 @@
 import dotenv from "dotenv";
 import os from "node:os";
-import { parseEncryptionKey } from "./crypto.js";
+import { parseEncryptionKey } from "./crypto";
 
 // Load .env from workspace root or current directory
 dotenv.config({ path: "../../.env" });

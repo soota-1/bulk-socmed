@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nextFreeSlot } from "../src/slots.js";
+import { nextFreeSlot } from "../src/slots";
 
 // WIB = UTC+7
 // nowWib = "2026-11-22 11:00 WIB" = 2026-11-22T04:00:00Z

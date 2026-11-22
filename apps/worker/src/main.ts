@@ -1,6 +1,6 @@
-import { loadConfig } from "./config.js";
-import { createWorkerSupabaseClient } from "./supabase.js";
-import { runSchedulerCycle } from "./scheduler.js";
+import { loadConfig } from "./config";
+import { createWorkerSupabaseClient } from "./supabase";
+import { runSchedulerCycle } from "./scheduler";
 
 const LOOP_INTERVAL_MS = 30_000; // 30 seconds
 

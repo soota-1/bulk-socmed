@@ -5,7 +5,7 @@ import {
   MAX_THUMBNAIL_SIZE_BYTES,
   SUPPORTED_VIDEO_TYPES,
   SUPPORTED_THUMBNAIL_TYPES,
-} from "./constants.js";
+} from "./constants";
 
 // ---------------------------------------------------------------------------
 // Upload request schema (used by POST /api/v1/uploads)

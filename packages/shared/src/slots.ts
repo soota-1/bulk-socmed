@@ -1,7 +1,7 @@
 import { addDays, addMinutes, format, setHours, setMinutes, setSeconds, setMilliseconds, startOfDay } from "date-fns";
 import { toZonedTime, fromZonedTime } from "date-fns-tz";
-import { TIMEZONE_WIB } from "./constants.js";
-import type { NextFreeSlotResult } from "./types.js";
+import { TIMEZONE_WIB } from "./constants";
+import type { NextFreeSlotResult } from "./types";
 
 /**
  * Parse "HH:MM" string into { hours, minutes }.
