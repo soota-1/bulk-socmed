@@ -1,4 +1,4 @@
-import crypto from "node:crypto";
+import crypto from "crypto";
 
 const IV_LENGTH_BYTES = 12; // 96-bit IV recommended for AES-GCM
 const AUTH_TAG_LENGTH_BYTES = 16; // 128-bit auth tag
