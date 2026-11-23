@@ -8,6 +8,7 @@
     "test": "pnpm -r test",
     "dev:web": "pnpm --filter web dev",
     "dev:worker": "pnpm --filter worker dev",
+    "check:env": "pnpm --filter worker exec tsx ../../scripts/doctor.ts",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "clean": "pnpm -r exec -- rimraf dist .next *.tsbuildinfo"
