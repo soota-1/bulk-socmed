@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
+import { HeaderStatus } from "@/components/HeaderStatus";
 
 export const metadata: Metadata = {
   title: "Penjadwal Video Pendek",
@@ -15,7 +16,7 @@ export default function RootLayout({
   return (
     <html lang="id">
       <body className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
-        <header className="border-b bg-white border-slate-200 sticky top-0 z-30">
+        <header className="border-b bg-white border-slate-200 sticky top-0 z-30 shadow-sm">
           <div className="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
             <div className="flex items-center space-x-6">
               <Link href="/" className="font-bold text-lg text-indigo-600 flex items-center gap-2">
@@ -34,7 +35,8 @@ export default function RootLayout({
                 </Link>
               </nav>
             </div>
-            <div>
+            <div className="flex items-center gap-4">
+              <HeaderStatus />
               <Link
                 href="/new"
                 className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition shadow-sm"

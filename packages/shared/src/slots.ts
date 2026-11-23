@@ -23,6 +23,14 @@ export function formatDateWib(utcDate: Date): string {
 }
 
 /**
+ * Format a UTC Date as "YYYY-MM-DD HH:mm WIB" in WIB timezone.
+ */
+export function formatWibDateTime(utcDate: Date): string {
+  const wib = toZonedTime(utcDate, TIMEZONE_WIB);
+  return format(wib, "yyyy-MM-dd HH:mm 'WIB'");
+}
+
+/**
  * Given a UTC Date representing the start of a WIB day, and a "HH:MM" slot time,
  * return the UTC Date for that slot time in WIB.
  *

@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SettingsSchema, type Settings } from "@bulk-socmed/shared";
 import { createClient } from "@/lib/supabase/server";
 
-export const DEFAULT_SETTINGS: Required<Settings> & {
+const DEFAULT_SETTINGS: Required<Settings> & {
   timezone: string;
   max_video_size_mb: number;
 } = {
