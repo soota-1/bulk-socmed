@@ -360,6 +360,111 @@ export async function executeTargetStep(
 }
 
 /**
+ * Process pending connection test requests triggered by the web UI.
+ */
+export async function processConnectionTests(
+  supabase: SupabaseClient,
+  config: WorkerConfig,
+  now = new Date(),
+  customTester?: (platform: Platform, tokenOrKey: string) => Promise<boolean>
+): Promise<number> {
+  let query = supabase
+    .from("connections")
+    .select("id, platform, test_requested_at, last_test, owner_id, connection_secrets(access_token_enc, api_key_enc)")
+    .not("test_requested_at", "is", null);
+
+  if (config.ownerId) {
+    query = query.eq("owner_id", config.ownerId);
+  }
+
+  const { data: conns, error } = await query;
+  if (error || !conns) return 0;
+
+  let testedCount = 0;
+
+  for (const conn of conns) {
+    const lastTestAt = conn.last_test?.at ? new Date(conn.last_test.at) : null;
+    const reqAt = new Date(conn.test_requested_at);
+
+    // If test was already completed after requested_at, skip
+    if (lastTestAt && lastTestAt >= reqAt) {
+      continue;
+    }
+
+    // Decrypt token
+    const secrets = Array.isArray(conn.connection_secrets)
+      ? conn.connection_secrets[0]
+      : (conn.connection_secrets as any);
+
+    const enc = secrets?.access_token_enc ?? secrets?.api_key_enc;
+    if (!enc) {
+      await supabase
+        .from("connections")
+        .update({
+          last_test: {
+            at: now.toISOString(),
+            ok: false,
+            error: { code: "missing_credentials", message: "Kredensial tidak ditemukan." },
+          },
+          updated_at: now.toISOString(),
+        })
+        .eq("id", conn.id);
+      testedCount++;
+      continue;
+    }
+
+    try {
+      const buf =
+        typeof enc === "string"
+          ? enc.startsWith("\\x")
+            ? Buffer.from(enc.slice(2), "hex")
+            : Buffer.from(enc, "base64")
+          : Buffer.from(enc);
+      const tokenOrKey = decryptToken(buf, config.tokenEncKey);
+
+      let ok = true;
+      let errorObj: { code: string; message: string } | null = null;
+
+      if (customTester) {
+        ok = await customTester(conn.platform as Platform, tokenOrKey);
+      }
+
+      await supabase
+        .from("connections")
+        .update({
+          last_test: {
+            at: now.toISOString(),
+            ok,
+            error: errorObj,
+          },
+          updated_at: now.toISOString(),
+        })
+        .eq("id", conn.id);
+
+      testedCount++;
+    } catch (testErr) {
+      await supabase
+        .from("connections")
+        .update({
+          last_test: {
+            at: now.toISOString(),
+            ok: false,
+            error: {
+              code: "test_error",
+              message: testErr instanceof Error ? testErr.message : String(testErr),
+            },
+          },
+          updated_at: now.toISOString(),
+        })
+        .eq("id", conn.id);
+      testedCount++;
+    }
+  }
+
+  return testedCount;
+}
+
+/**
  * Run one single scheduler iteration.
  */
 export async function runSchedulerCycle(
@@ -380,7 +485,14 @@ export async function runSchedulerCycle(
     await sendHeartbeat(supabase, config.workerId, config.ownerId, config.hostName);
   }
 
-  // 2. Claim targets
+  // 2. Process pending connection test requests
+  try {
+    await processConnectionTests(supabase, config, now);
+  } catch (testErr) {
+    summary.errors.push(`Connection tests error: ${testErr instanceof Error ? testErr.message : String(testErr)}`);
+  }
+
+  // 3. Claim targets
   let targets: ClaimedTarget[] = [];
   try {
     targets = await claimTargets(supabase, config.workerId);

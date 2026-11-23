@@ -3,6 +3,7 @@ import {
   isTargetMissed,
   executeTargetStep,
   runSchedulerCycle,
+  processConnectionTests,
   type ClaimedTarget,
 } from "../src/scheduler";
 import type { Publisher, StepResult } from "../src/publishers/base";
@@ -472,6 +473,9 @@ describe("scheduler — runSchedulerCycle integration", () => {
         if (table === "connections") {
           return {
             select: vi.fn().mockReturnValue({
+              not: vi.fn().mockReturnValue({
+                eq: vi.fn().mockResolvedValue({ data: [], error: null }),
+              }),
               eq: vi.fn().mockReturnValue({
                 eq: vi.fn().mockReturnValue({
                   maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
@@ -505,5 +509,65 @@ describe("scheduler — runSchedulerCycle integration", () => {
     expect(summary.missedCount).toBe(0);
     expect(summary.errors).toHaveLength(0);
     expect(mockPublisher.advance).toHaveBeenCalled();
+  });
+});
+
+describe("scheduler — processConnectionTests", () => {
+  const now = new Date("2026-11-23T12:00:00Z");
+  const encKey = Buffer.alloc(32, 2);
+
+  const mockConfig: WorkerConfig = {
+    supabaseUrl: "https://test.supabase.co",
+    supabaseServiceRoleKey: "service_role_key",
+    tokenEncKey: encKey,
+    workerId: "test-worker",
+    ownerId: "user-1",
+    hostName: "test-host",
+  };
+
+  it("processes pending connection test successfully", async () => {
+    const updateMock = vi.fn().mockReturnValue({
+      eq: vi.fn().mockResolvedValue({ error: null }),
+    });
+
+    const mockConn = {
+      id: 1,
+      platform: "youtube",
+      test_requested_at: "2026-11-23T11:59:00Z",
+      last_test: null,
+      owner_id: "user-1",
+      connection_secrets: {
+        access_token_enc: Buffer.from("dummy_enc"),
+      },
+    };
+
+    const supabase = {
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          not: vi.fn().mockReturnValue({
+            eq: vi.fn().mockResolvedValue({ data: [mockConn], error: null }),
+          }),
+        }),
+        update: updateMock,
+      }),
+    } as any;
+
+    const customTester = vi.fn().mockResolvedValue(true);
+    // Mock decryptToken behavior by passing custom tester
+    vi.spyOn(await import("../src/crypto"), "decryptToken").mockReturnValue("decrypted_token");
+
+    const tested = await processConnectionTests(supabase, mockConfig, now, customTester);
+
+    expect(tested).toBe(1);
+    expect(customTester).toHaveBeenCalledWith("youtube", "decrypted_token");
+    expect(updateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        last_test: {
+          at: now.toISOString(),
+          ok: true,
+          error: null,
+        },
+      })
+    );
   });
 });
