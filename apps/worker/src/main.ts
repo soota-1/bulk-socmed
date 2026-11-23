@@ -1,8 +1,6 @@
 import { loadConfig } from "./config";
 import { createWorkerSupabaseClient } from "./supabase";
-import { runSchedulerCycle } from "./scheduler";
-
-const LOOP_INTERVAL_MS = 30_000; // 30 seconds
+import { Daemon } from "./daemon";
 
 async function main() {
   console.log("=== Penjadwal Video Pendek — Worker Daemon ===");
@@ -17,49 +15,23 @@ async function main() {
   }
 
   const supabase = createWorkerSupabaseClient(config);
+  const daemon = new Daemon(supabase, config);
 
-  console.log(`[Worker] Started daemon loop (interval: ${LOOP_INTERVAL_MS / 1000}s)`);
-
-  let isRunning = false;
-
-  const tick = async () => {
-    if (isRunning) {
-      console.log("[Worker] Previous cycle still running, skipping tick.");
-      return;
-    }
-    isRunning = true;
-    try {
-      const summary = await runSchedulerCycle(supabase, config);
-      if (summary.claimedCount > 0 || summary.errors.length > 0) {
-        console.log(
-          `[Cycle] Claimed: ${summary.claimedCount}, Processed: ${summary.processedCount}, Missed: ${summary.missedCount}, Errors: ${summary.errors.length}`
-        );
-        if (summary.errors.length > 0) {
-          console.warn("[Cycle Errors]:", summary.errors);
-        }
-      }
-    } catch (err) {
-      console.error("[Cycle Fatal]:", err);
-    } finally {
-      isRunning = false;
-    }
-  };
-
-  // Immediate first tick
-  await tick();
-
-  // Recurring loop
-  const timer = setInterval(tick, LOOP_INTERVAL_MS);
-
-  // Graceful shutdown
-  const shutdown = () => {
-    console.log("\n[Worker] Shutting down gracefully...");
-    clearInterval(timer);
+  // Graceful shutdown handling
+  let isShuttingDown = false;
+  const handleShutdown = async (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    console.log(`\n[Worker] Received ${signal}, shutting down gracefully...`);
+    await daemon.stop(15_000);
     process.exit(0);
   };
 
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", () => handleShutdown("SIGINT"));
+  process.on("SIGTERM", () => handleShutdown("SIGTERM"));
+
+  // Start the daemon loop
+  daemon.start();
 }
 
 main().catch((err) => {
