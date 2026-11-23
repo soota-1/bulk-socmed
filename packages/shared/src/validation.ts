@@ -119,3 +119,15 @@ export const SettingsSchema = z.object({
 });
 
 export type Settings = z.infer<typeof SettingsSchema>;
+
+// ---------------------------------------------------------------------------
+// Buffer connection schema (used by PUT /api/v1/connections/tiktok)
+// ---------------------------------------------------------------------------
+
+export const BufferConnectionInputSchema = z.object({
+  buffer_api_key: z.string().min(1, { message: "API key Buffer tidak boleh kosong" }),
+  buffer_channel_id: z.string().min(1).optional(),
+});
+
+export type BufferConnectionInput = z.infer<typeof BufferConnectionInputSchema>;
+
