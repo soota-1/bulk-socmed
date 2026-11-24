@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     Mendaftarkan atau menghapus Worker Penjadwal Video Pendek dari Windows Task Scheduler.
 

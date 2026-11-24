@@ -211,9 +211,11 @@ create table public.target_events (
   id           bigint generated always as identity primary key,
   target_id    bigint not null references public.targets (id) on delete cascade,
   at           timestamptz not null default now(),
+  created_at   timestamptz not null default now(),
   event        text not null
                check (event in ('status_change', 'step_done', 'api_call',
-                                'retry_scheduled', 'recovered', 'action', 'note')),
+                                'retry_scheduled', 'recovered', 'action', 'note',
+                                'error', 'hold', 'cancelled', 'sync_changes', 'retry', 'media_cleaned')),
   from_status  text,
   to_status    text,
   detail       jsonb   -- MUST NOT contain tokens, secrets, or signed URLs
@@ -267,12 +269,12 @@ create policy uploads_own on public.uploads
 create table public.api_limits (
   owner_id     uuid not null default auth.uid() references auth.users (id) on delete cascade,
   platform     text not null,
-  window       text not null,          -- e.g. '24h', '30d'
+  "window"     text not null,          -- e.g. '24h', '30d' (quoted because window is a reserved keyword in PostgreSQL)
   remaining    integer,
   limit_total  integer,
   resets_at    timestamptz,
   observed_at  timestamptz not null default now(),
-  primary key (owner_id, platform, window)
+  primary key (owner_id, platform, "window")
 );
 
 alter table public.api_limits enable row level security;

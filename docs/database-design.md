@@ -277,12 +277,12 @@ create index ix_uploads_owner_state on public.uploads (owner_id, state);
 create table public.api_limits (
   owner_id     uuid not null default auth.uid() references auth.users (id) on delete cascade,
   platform     text not null,
-  window       text not null,                -- mis. '24h', '30d'
+  "window"     text not null,                -- mis. '24h', '30d' (dikutip karena window adalah reserved word PostgreSQL)
   remaining    integer,
   limit_total  integer,
   resets_at    timestamptz,
   observed_at  timestamptz not null default now(),
-  primary key (owner_id, platform, window)
+  primary key (owner_id, platform, "window")
 );
 ```
 
