@@ -111,36 +111,58 @@ export default function NewPostPage() {
       }
 
       const uploadData = await initRes.json();
-      const { upload_id, signed_upload_url } = uploadData;
+      const uploadId = uploadData.upload_id;
+      const signedUploadUrl =
+        uploadData.upload?.url || uploadData.signed_upload_url || uploadData.signedUrl;
+
+      if (!signedUploadUrl) {
+        throw new Error("Gagal memperoleh URL unggah dari server.");
+      }
 
       // 2. Upload file to Supabase Storage signed URL
-      setUploadProgress("Mengunggah video ke penyimpanan...");
-      const putRes = await fetch(signed_upload_url, {
+      setUploadProgress("Mengunggah video ke penyimpanan cloud...");
+      const contentType = videoFile.type || "video/mp4";
+      const putRes = await fetch(signedUploadUrl, {
         method: "PUT",
         headers: {
-          "Content-Type": videoFile.type || "video/mp4",
+          "Content-Type": contentType,
         },
         body: videoFile,
       });
 
       if (!putRes.ok) {
-        throw new Error("Gagal mentransfer video ke penyimpanan cloud.");
+        const errorText = await putRes.text().catch(() => "");
+        throw new Error(
+          `Gagal mentransfer video ke penyimpanan cloud (${putRes.status}: ${errorText || putRes.statusText})`
+        );
       }
 
       // 3. Create scheduled post
       setUploadProgress("Menjadwalkan rilis video...");
       const postBody: any = {
-        video_upload_id: upload_id,
+        video_upload_id: uploadId,
         title: (title || autoTitle).trim() || null,
         caption: caption.trim(),
         hashtags: hashtags.trim(),
-        mode: scheduleMode === "exact" ? "exact" : "next_free",
+        mode: "schedule",
       };
 
       if (scheduleMode === "exact" && exactDate && exactTime) {
+        const standardSlots = ["06:00", "12:00", "16:00", "19:00"];
+        if (standardSlots.includes(exactTime)) {
+          postBody.schedule = {
+            type: "slot",
+            slot_key: `${exactDate}@${exactTime}`,
+          };
+        } else {
+          postBody.schedule = {
+            type: "custom",
+            due_at: new Date(`${exactDate}T${exactTime}:00+07:00`).toISOString(),
+          };
+        }
+      } else {
         postBody.schedule = {
-          date: exactDate,
-          time: exactTime,
+          type: "next_free",
         };
       }
 

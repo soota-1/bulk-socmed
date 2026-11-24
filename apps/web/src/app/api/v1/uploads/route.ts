@@ -117,6 +117,7 @@ export async function POST(request: NextRequest) {
         kind,
         bucket,
         object_path: objectPath,
+        signed_upload_url: uploadData.signedUrl,
         upload: {
           method: "signed_url",
           url: uploadData.signedUrl,
