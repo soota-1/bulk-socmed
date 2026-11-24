@@ -52,13 +52,21 @@ Salin hasilnya sebagai `TOKEN_ENC_KEY`.
 5. Salin **Client ID** dan **Client Secret**.
 
 ### D. Setup Meta for Developers (Instagram Graph API)
-1. Buka [Meta for Developers](https://developers.facebook.com/) dan buat App bertipe **Business**.
+
+> [!TIP]
+> **Otomatisasi Playwright:** Anda dapat menjalankan wizard interaktif berbasis Playwright yang otomatis membuka browser Google Chrome dan menuntun langkah setup ini:
+> ```powershell
+> pnpm setup:meta
+> ```
+
+1. Buka [Meta for Developers](https://developers.facebook.com/) dan buat App bertipe **Business** (atau use case *Authenticate and request data with Facebook Login*).
 2. Pastikan akun Instagram Anda bertipe **Instagram Professional / Creator Account** dan telah terhubung ke sebuah **Facebook Page**.
-3. Tambahkan produk **Instagram Graph API**.
-4. Di bagian **Settings &rarr; Basic**, salin **App ID** (`META_CLIENT_ID`) dan **App Secret** (`META_CLIENT_SECRET`).
+3. Tambahkan produk **Instagram Graph API** dan **Facebook Login for Business**.
+4. Di bagian **Settings &rarr; Basic**, salin **App ID** (`META_CLIENT_ID` / `META_APP_ID`) dan **App Secret** (`META_CLIENT_SECRET` / `META_APP_SECRET`).
 5. Pada menu **Facebook Login &rarr; Settings**, masukkan Valid OAuth Redirect URIs:
    - `https://<nama-aplikasi-anda>.vercel.app/api/oauth/instagram/callback`
    - `http://localhost:3000/api/oauth/instagram/callback`
+6. Pada menu **App Roles &rarr; Roles**, di bawah *Instagram Testers*, tambahkan username akun Instagram Anda, lalu buka Instagram di HP/Web &rarr; **Settings &rarr; Apps and Websites &rarr; Tester Invitations &rarr; Accept**.
 
 ### E. Setup Buffer (TikTok API)
 1. Buka [buffer.com](https://buffer.com/) dan buat akun gratis.

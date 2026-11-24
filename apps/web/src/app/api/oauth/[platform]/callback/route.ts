@@ -101,8 +101,8 @@ export async function GET(
         // Fallback display name
       }
     } else if (platform === "instagram") {
-      const clientId = process.env.META_CLIENT_ID || "";
-      const clientSecret = process.env.META_CLIENT_SECRET || "";
+      const clientId = process.env.META_CLIENT_ID || process.env.META_APP_ID || "";
+      const clientSecret = process.env.META_CLIENT_SECRET || process.env.META_APP_SECRET || "";
 
       const tokenRes = await fetch(
         `https://graph.facebook.com/v19.0/oauth/access_token?client_id=${clientId}&client_secret=${clientSecret}&redirect_uri=${encodeURIComponent(

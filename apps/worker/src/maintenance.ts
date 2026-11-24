@@ -170,8 +170,8 @@ export async function refreshExpiringTokens(
           // Instagram / Meta token refresh
           const res = await fetch(
             `https://graph.facebook.com/v19.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${
-              process.env.META_CLIENT_ID || ""
-            }&client_secret=${process.env.META_CLIENT_SECRET || ""}&fb_exchange_token=${refreshToken}`
+              process.env.META_CLIENT_ID || process.env.META_APP_ID || ""
+            }&client_secret=${process.env.META_CLIENT_SECRET || process.env.META_APP_SECRET || ""}&fb_exchange_token=${refreshToken}`
           );
           const data = await res.json();
           if (!res.ok || !data.access_token) {

@@ -33,3 +33,6 @@ Thumbs.db
 
 # SDD workspace (plan execution scratch)
 .superpowers/
+
+# Playwright & browser cache
+.cache/
