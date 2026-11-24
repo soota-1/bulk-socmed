@@ -2,6 +2,15 @@
 
 import { useEffect, useState } from "react";
 import type { Settings } from "@bulk-socmed/shared";
+import {
+  Sliders,
+  HardDrive,
+  Save,
+  CheckCircle2,
+  AlertCircle,
+  Database,
+  ArrowUpRight,
+} from "lucide-react";
 
 interface UsageData {
   storage: {
@@ -21,7 +30,7 @@ export default function SettingsPage() {
   const [usage, setUsage] = useState<UsageData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   // Form states
   const [graceMinutes, setGraceMinutes] = useState(120);
@@ -83,13 +92,13 @@ export default function SettingsPage() {
       });
 
       if (res.ok) {
-        setMessage("Pengaturan berhasil disimpan.");
+        setMessage({ type: "success", text: "Pengaturan berhasil diperbarui!" });
       } else {
         const err = await res.json();
-        setMessage(`Gagal menyimpan: ${err.error?.message}`);
+        setMessage({ type: "error", text: `Gagal menyimpan: ${err.error?.message}` });
       }
     } catch {
-      setMessage("Terjadi kesalahan jaringan.");
+      setMessage({ type: "error", text: "Terjadi kesalahan jaringan." });
     } finally {
       setSaving(false);
     }
@@ -97,41 +106,60 @@ export default function SettingsPage() {
 
   if (loading) {
     return (
-      <div className="py-12 text-center text-slate-500 text-sm">
-        Memuat pengaturan...
+      <div className="py-20 text-center">
+        <div className="w-8 h-8 mx-auto border-3 border-indigo-600/20 border-t-indigo-600 rounded-full animate-spin"></div>
+        <p className="text-xs text-slate-500 mt-3 font-medium">Memuat konfigurasi sistem...</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">Pengaturan</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Konfigurasi toleransi jadwal, antrean platform, dan pantauan kuota gratis Supabase.
+    <div className="space-y-6 max-w-4xl mx-auto">
+      {/* Header */}
+      <div className="pb-2 border-b border-slate-200/60">
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900">Pengaturan Sistem</h1>
+        <p className="text-xs sm:text-sm text-slate-500 mt-1">
+          Konfigurasi toleransi jadwal posting, antrean platform, dan pantau kuota gratis Supabase.
         </p>
       </div>
 
       {message && (
-        <div className="p-3 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-medium">
-          {message}
+        <div
+          className={`p-3.5 rounded-xl border text-xs sm:text-sm font-medium flex items-center gap-2.5 shadow-2xs ${
+            message.type === "success"
+              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+              : "bg-rose-50 border-rose-200 text-rose-800"
+          }`}
+        >
+          {message.type === "success" ? (
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+          ) : (
+            <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+          )}
+          <span>{message.text}</span>
         </div>
       )}
 
       {/* Storage & Egress Meters */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
-        <h3 className="font-bold text-slate-900 text-sm">Estimasi Pemakaian Kuota Free-Tier Supabase</h3>
+      <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-xs space-y-5">
+        <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100">
+          <Database className="w-5 h-5 text-indigo-600" />
+          <h3 className="font-bold text-slate-900 text-sm">Estimasi Kuota Free-Tier Supabase</h3>
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Storage Meter */}
-          <div className="space-y-2">
-            <div className="flex justify-between text-xs">
-              <span className="font-semibold text-slate-700">Penyimpanan Media (Storage)</span>
-              <span className="text-slate-500">
+          <div className="space-y-2 p-4 rounded-xl bg-slate-50/70 border border-slate-200/60">
+            <div className="flex justify-between items-center text-xs">
+              <span className="font-semibold text-slate-800 flex items-center gap-1.5">
+                <HardDrive className="w-3.5 h-3.5 text-slate-500" />
+                Penyimpanan Media
+              </span>
+              <span className="font-mono text-slate-600 font-medium">
                 {((usage?.storage?.used_bytes_estimate ?? 0) / (1024 * 1024)).toFixed(1)} MB / 1.024 MB
               </span>
             </div>
-            <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+            <div className="w-full bg-slate-200/80 rounded-full h-2.5 overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all ${
                   (usage?.storage?.percent ?? 0) >= 80 ? "bg-amber-500" : "bg-indigo-600"
@@ -139,20 +167,23 @@ export default function SettingsPage() {
                 style={{ width: `${Math.min(100, usage?.storage?.percent ?? 0)}%` }}
               ></div>
             </div>
-            <p className="text-[11px] text-slate-400">
-              Kapasitas maksimal: 1 GB (50 MB per video). File video dibersihkan otomatis 3 hari setelah terbit.
+            <p className="text-[11px] text-slate-500">
+              Kapasitas: 1 GB. Berkas video dibersihkan otomatis 3 hari setelah terbit.
             </p>
           </div>
 
           {/* Egress Meter */}
-          <div className="space-y-2">
-            <div className="flex justify-between text-xs">
-              <span className="font-semibold text-slate-700">Unduhan Bulan Ini (Egress)</span>
-              <span className="text-slate-500">
+          <div className="space-y-2 p-4 rounded-xl bg-slate-50/70 border border-slate-200/60">
+            <div className="flex justify-between items-center text-xs">
+              <span className="font-semibold text-slate-800 flex items-center gap-1.5">
+                <ArrowUpRight className="w-3.5 h-3.5 text-slate-500" />
+                Bandwidth Unduhan (Egress)
+              </span>
+              <span className="font-mono text-slate-600 font-medium">
                 {((usage?.egress_month?.used_bytes_estimate ?? 0) / (1024 * 1024)).toFixed(1)} MB / 5.120 MB
               </span>
             </div>
-            <div className="w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+            <div className="w-full bg-slate-200/80 rounded-full h-2.5 overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all ${
                   (usage?.egress_month?.percent ?? 0) >= 80 ? "bg-amber-500" : "bg-emerald-500"
@@ -160,21 +191,25 @@ export default function SettingsPage() {
                 style={{ width: `${Math.min(100, usage?.egress_month?.percent ?? 0)}%` }}
               ></div>
             </div>
-            <p className="text-[11px] text-slate-400">
-              Batas gratis Supabase: 5 GB/bulan. Dilindungi cache lokal pekerja dan pemutaran video on-demand.
+            <p className="text-[11px] text-slate-500">
+              Batas gratis: 5 GB/bulan. Dihemat dengan cache lokal pekerja dan pemutaran on-demand.
             </p>
           </div>
         </div>
       </div>
 
       {/* Operational Parameters Form */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
-        <h3 className="font-bold text-slate-900 text-sm">Parameter Operasional & Toleransi</h3>
+      <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-xs space-y-5">
+        <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100">
+          <Sliders className="w-5 h-5 text-indigo-600" />
+          <h3 className="font-bold text-slate-900 text-sm">Parameter Operasional & Toleransi Pekerja</h3>
+        </div>
 
-        <form onSubmit={handleSaveSettings} className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+        <form onSubmit={handleSaveSettings} className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* Grace Period */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-slate-700">
                 Toleransi Keterlambatan (*Grace Period*)
               </label>
               <div className="flex items-center gap-2">
@@ -184,18 +219,19 @@ export default function SettingsPage() {
                   max={1440}
                   value={graceMinutes}
                   onChange={(e) => setGraceMinutes(Number(e.target.value))}
-                  className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50/50 focus:bg-white"
                 />
-                <span className="text-xs text-slate-500">menit</span>
+                <span className="text-xs text-slate-500 font-medium shrink-0">menit</span>
               </div>
-              <p className="text-[11px] text-slate-400 mt-1">
-                Bila laptop mati dan hidup kembali melewati batas ini, posting ditandai *missed* (tidak diposting diam-diam).
+              <p className="text-[11px] text-slate-400">
+                Bila laptop mati dan hidup kembali lewat batas ini, posting ditandai *missed* (tidak diposting mendadak).
               </p>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Jendela Kirim TikTok Buffer (*Rolling Window*)
+            {/* TikTok Rolling Window */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-slate-700">
+                Jendela Kirim TikTok Buffer
               </label>
               <div className="flex items-center gap-2">
                 <input
@@ -204,17 +240,18 @@ export default function SettingsPage() {
                   max={14}
                   value={tiktokWindowDays}
                   onChange={(e) => setTiktokWindowDays(Number(e.target.value))}
-                  className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50/50 focus:bg-white"
                 />
-                <span className="text-xs text-slate-500">hari sebelum tayang</span>
+                <span className="text-xs text-slate-500 font-medium shrink-0">hari sebelum</span>
               </div>
-              <p className="text-[11px] text-slate-400 mt-1">
+              <p className="text-[11px] text-slate-400">
                 Mencegah kuota antrean gratis Buffer (10 post) penuh dengan hanya mengirim video beberapa hari ke depan.
               </p>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+            {/* Buffer Queue Limit */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-slate-700">
                 Batas Antrean Maksimal Buffer
               </label>
               <input
@@ -223,16 +260,17 @@ export default function SettingsPage() {
                 max={100}
                 value={bufferQueueLimit}
                 onChange={(e) => setBufferQueueLimit(Number(e.target.value))}
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50/50 focus:bg-white"
               />
-              <p className="text-[11px] text-slate-400 mt-1">
-                Default 10 post untuk paket gratis Buffer.
+              <p className="text-[11px] text-slate-400">
+                Batas standar paket gratis Buffer adalah 10 antrean per channel.
               </p>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Waktu Mulai Siapkan Instagram Reels
+            {/* Instagram Prepare Lead */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-slate-700">
+                Lead Time Kontainer Instagram
               </label>
               <div className="flex items-center gap-2">
                 <input
@@ -241,18 +279,19 @@ export default function SettingsPage() {
                   max={60}
                   value={igPrepareLeadMinutes}
                   onChange={(e) => setIgPrepareLeadMinutes(Number(e.target.value))}
-                  className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50/50 focus:bg-white"
                 />
-                <span className="text-xs text-slate-500">menit sebelum tayang</span>
+                <span className="text-xs text-slate-500 font-medium shrink-0">menit</span>
               </div>
-              <p className="text-[11px] text-slate-400 mt-1">
-                Waktu worker mengunggah kontainer Reels sebelum jam tayang tiba.
+              <p className="text-[11px] text-slate-400">
+                Waktu pekerja mengunggah kontainer video ke Meta sebelum jadwal rilis tiba.
               </p>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Waktu Minimum Pembuatan Entri (*Min Lead*)
+            {/* Min Lead Minutes */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-slate-700">
+                Jarak Minimum Waktu Entri Baru (*Min Lead*)
               </label>
               <div className="flex items-center gap-2">
                 <input
@@ -261,17 +300,18 @@ export default function SettingsPage() {
                   max={120}
                   value={minLeadMinutes}
                   onChange={(e) => setMinLeadMinutes(Number(e.target.value))}
-                  className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50/50 focus:bg-white"
                 />
-                <span className="text-xs text-slate-500">menit dari sekarang</span>
+                <span className="text-xs text-slate-500 font-medium shrink-0">menit</span>
               </div>
-              <p className="text-[11px] text-slate-400 mt-1">
+              <p className="text-[11px] text-slate-400">
                 Batas slot waktu terdekat yang dapat dipilih saat membuat video baru.
               </p>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
+            {/* Quota Warning Percent */}
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold text-slate-700">
                 Ambang Peringatan Kuota (*Quota Warning*)
               </label>
               <div className="flex items-center gap-2">
@@ -281,12 +321,12 @@ export default function SettingsPage() {
                   max={95}
                   value={quotaWarnPercent}
                   onChange={(e) => setQuotaWarnPercent(Number(e.target.value))}
-                  className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="w-full text-xs px-3.5 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50/50 focus:bg-white"
                 />
-                <span className="text-xs text-slate-500">%</span>
+                <span className="text-xs text-slate-500 font-medium shrink-0">%</span>
               </div>
-              <p className="text-[11px] text-slate-400 mt-1">
-                Spanduk peringatan muncul ketika penyimpanan atau unduhan mencapai persentase ini.
+              <p className="text-[11px] text-slate-400">
+                Spanduk peringatan muncul di bagian atas ketika storage atau egress mencapai persentase ini.
               </p>
             </div>
           </div>
@@ -295,9 +335,10 @@ export default function SettingsPage() {
             <button
               type="submit"
               disabled={saving}
-              className="px-5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow transition disabled:opacity-50"
+              className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs sm:text-sm font-semibold shadow-xs transition disabled:opacity-50 flex items-center gap-2 cursor-pointer"
             >
-              {saving ? "Menyimpan..." : "Simpan Pengaturan"}
+              <Save className="w-4 h-4" />
+              <span>{saving ? "Menyimpan..." : "Simpan Perubahan"}</span>
             </button>
           </div>
         </form>

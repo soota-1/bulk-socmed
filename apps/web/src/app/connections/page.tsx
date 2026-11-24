@@ -3,6 +3,21 @@
 import { useEffect, useState, useTransition, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import type { Platform, ConnectionStatus } from "@bulk-socmed/shared";
+import {
+  Youtube,
+  Instagram,
+  Music2,
+  CheckCircle2,
+  AlertTriangle,
+  XCircle,
+  ExternalLink,
+  RefreshCw,
+  Unplug,
+  KeyRound,
+  ShieldCheck,
+  Check,
+  X,
+} from "lucide-react";
 
 interface ConnectionItem {
   platform: Platform;
@@ -23,8 +38,8 @@ function ConnectionsContent() {
 
   const [connections, setConnections] = useState<ConnectionItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [actionMessage, setActionMessage] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
+  const [testingPlatform, setTestingPlatform] = useState<string | null>(null);
 
   // TikTok Buffer modal state
   const [bufferApiKey, setBufferApiKey] = useState("");
@@ -54,7 +69,7 @@ function ConnectionsContent() {
 
   async function handleOAuthAuthorize(platform: "youtube" | "instagram") {
     try {
-      setActionMessage(`Menghubungkan ke ${platform}...`);
+      setActionMessage({ type: "info", text: `Mengarahkan ke dialog masuk ${platform}...` });
       const res = await fetch(`/api/v1/connections/${platform}/authorize`, {
         method: "POST",
       });
@@ -62,34 +77,42 @@ function ConnectionsContent() {
       if (res.ok && data.authorize_url) {
         window.location.href = data.authorize_url;
       } else {
-        setActionMessage(`Gagal memulai OAuth: ${data.error?.message || "Unknown error"}`);
+        setActionMessage({
+          type: "error",
+          text: `Gagal memulai OAuth: ${data.error?.message || "Pastikan kredensial di .env sudah benar"}`,
+        });
       }
-    } catch (err) {
-      setActionMessage("Terjadi kesalahan jaringan.");
+    } catch {
+      setActionMessage({ type: "error", text: "Terjadi kesalahan koneksi jaringan." });
     }
   }
 
   async function handleTestConnection(platform: Platform) {
     try {
+      setTestingPlatform(platform);
+      setActionMessage({ type: "info", text: `Menguji koneksi ${platform}...` });
       const res = await fetch(`/api/v1/connections/${platform}/test`, {
         method: "POST",
       });
       if (res.ok) {
-        setActionMessage(
-          `Uji koneksi ${platform} telah diminta. Worker akan menguji koneksi dalam hitungan detik.`
-        );
+        setActionMessage({
+          type: "success",
+          text: `Permintaan uji ${platform} terkirim. Status akan diperbarui oleh worker.`,
+        });
         setTimeout(loadConnections, 3000);
       } else {
         const err = await res.json();
-        setActionMessage(`Gagal menguji koneksi: ${err.error?.message}`);
+        setActionMessage({ type: "error", text: `Uji gagal: ${err.error?.message}` });
       }
     } catch {
-      setActionMessage("Terjadi kesalahan jaringan saat menguji koneksi.");
+      setActionMessage({ type: "error", text: "Terjadi kesalahan jaringan saat menguji koneksi." });
+    } finally {
+      setTestingPlatform(null);
     }
   }
 
   async function handleDisconnect(platform: Platform) {
-    if (!confirm(`Yakin ingin memutuskan koneksi ${platform}? Posting yang belum terbit akan ditahan.`)) {
+    if (!confirm(`Yakin ingin memutuskan koneksi ${platform}? Video terjadwal ke platform ini akan ditahan.`)) {
       return;
     }
     try {
@@ -97,23 +120,22 @@ function ConnectionsContent() {
         method: "DELETE",
       });
       if (res.ok || res.status === 204) {
-        setActionMessage(`Koneksi ${platform} berhasil diputuskan.`);
+        setActionMessage({ type: "success", text: `Koneksi ${platform} berhasil diputuskan.` });
         loadConnections();
       }
     } catch {
-      setActionMessage("Gagal memutuskan koneksi.");
+      setActionMessage({ type: "error", text: "Gagal memutuskan koneksi." });
     }
   }
 
   async function handleFetchBufferChannels() {
     if (!bufferApiKey.trim()) {
-      setBufferError("Harap isi API key Buffer terlebih dahulu.");
+      setBufferError("Harap masukkan API key Buffer terlebih dahulu.");
       return;
     }
     setLoadingChannels(true);
     setBufferError(null);
     try {
-      // First save or test the key via PUT to check validity
       const res = await fetch("/api/v1/connections/tiktok", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -121,21 +143,20 @@ function ConnectionsContent() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setBufferError(data.error?.message || "API key Buffer tidak valid.");
+        setBufferError(data.error?.message || "API key Buffer tidak valid atau ditolak.");
         return;
       }
 
-      // Fetch channels
       const chRes = await fetch("/api/v1/connections/tiktok/channels");
       const chData = await chRes.json();
       if (chRes.ok && chData.items?.length > 0) {
         setBufferChannels(chData.items);
         setSelectedChannelId(chData.items[0].id);
       } else {
-        setBufferError("Tidak ditemukan channel TikTok di akun Buffer Anda.");
+        setBufferError("Tidak ditemukan channel TikTok di akun Buffer Anda. Hubungkan TikTok di buffer.com terlebih dahulu.");
       }
     } catch {
-      setBufferError("Gagal menghubungi server.");
+      setBufferError("Gagal menghubungi server Buffer.");
     } finally {
       setLoadingChannels(false);
     }
@@ -157,7 +178,7 @@ function ConnectionsContent() {
         }),
       });
       if (res.ok) {
-        setActionMessage("Akun TikTok via Buffer berhasil terhubung!");
+        setActionMessage({ type: "success", text: "Akun TikTok via Buffer berhasil terhubung!" });
         setBufferApiKey("");
         setBufferChannels([]);
         loadConnections();
@@ -174,92 +195,144 @@ function ConnectionsContent() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">Koneksi Akun</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Hubungkan akun sosial media Anda untuk penerbitan video otomatis Rp0 biaya.
+      {/* Header */}
+      <div className="pb-2 border-b border-slate-200/60">
+        <h1 className="text-2xl font-bold tracking-tight text-slate-900">Koneksi Akun Sosial Media</h1>
+        <p className="text-xs sm:text-sm text-slate-500 mt-1">
+          Hubungkan akun YouTube, Instagram, dan TikTok untuk distribusi video otomatis Rp0 biaya.
         </p>
       </div>
 
-      {/* Notifications */}
+      {/* Notifications / Alerts */}
       {connectedParam && (
-        <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm font-medium flex items-center justify-between">
-          <span>🎉 Akun {connectedParam} berhasil disambungkan!</span>
-          <button onClick={() => window.history.replaceState({}, "", "/connections")} className="text-emerald-600 hover:text-emerald-900">✕</button>
-        </div>
-      )}
-      {errorParam && (
-        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm font-medium flex items-center justify-between">
-          <span>❌ Gagal menyambungkan: {decodeURIComponent(errorParam)}</span>
-          <button onClick={() => window.history.replaceState({}, "", "/connections")} className="text-rose-600 hover:text-rose-900">✕</button>
-        </div>
-      )}
-      {actionMessage && (
-        <div className="p-3 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-medium">
-          {actionMessage}
+        <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs sm:text-sm font-medium flex items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>Akun <strong>{connectedParam}</strong> berhasil dihubungkan!</span>
+          </div>
+          <button onClick={() => window.history.replaceState({}, "", "/connections")} className="text-emerald-700 hover:text-emerald-950">
+            <X className="w-4 h-4" />
+          </button>
         </div>
       )}
 
-      {/* Grid of Connections */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* 1. YouTube */}
+      {errorParam && (
+        <div className="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-xs sm:text-sm font-medium flex items-center justify-between gap-3 shadow-2xs">
+          <div className="flex items-center gap-2">
+            <XCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>Gagal menyambungkan akun: {decodeURIComponent(errorParam)}</span>
+          </div>
+          <button onClick={() => window.history.replaceState({}, "", "/connections")} className="text-rose-700 hover:text-rose-950">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {actionMessage && (
+        <div
+          className={`p-3.5 rounded-xl border text-xs sm:text-sm font-medium flex items-center justify-between gap-3 ${
+            actionMessage.type === "success"
+              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+              : actionMessage.type === "error"
+              ? "bg-rose-50 border-rose-200 text-rose-800"
+              : "bg-indigo-50 border-indigo-200 text-indigo-800"
+          }`}
+        >
+          <span>{actionMessage.text}</span>
+          <button onClick={() => setActionMessage(null)} className="opacity-70 hover:opacity-100">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Grid of Connections - 1 col on mobile, 3 cols on large desktop */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* ==================== 1. YouTube ==================== */}
         {(() => {
           const yt = connections.find((c) => c.platform === "youtube");
           const isConnected = yt?.status === "active";
           const needsReauth = yt?.status === "needs_reauth";
 
           return (
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 flex flex-col justify-between shadow-sm">
-              <div>
+            <div className="bg-white rounded-2xl border border-slate-200/80 p-6 flex flex-col justify-between shadow-xs hover:shadow-sm transition-shadow">
+              <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center text-xl text-rose-600 font-bold">
-                    ▶
+                  <div className="w-12 h-12 rounded-2xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600 shadow-2xs">
+                    <Youtube className="w-6 h-6" />
                   </div>
                   <span
-                    className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
+                    className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-semibold border ${
                       isConnected
-                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                         : needsReauth
-                        ? "bg-amber-50 text-amber-700 border border-amber-200"
-                        : "bg-slate-100 text-slate-500"
+                        ? "bg-amber-50 text-amber-700 border-amber-200"
+                        : "bg-slate-100 text-slate-500 border-slate-200"
                     }`}
                   >
-                    {isConnected ? "Aktif" : needsReauth ? "Perlu Re-auth" : "Belum Terhubung"}
+                    {isConnected ? (
+                      <>
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        <span>Aktif</span>
+                      </>
+                    ) : needsReauth ? (
+                      <>
+                        <AlertTriangle className="w-3 h-3 text-amber-600" />
+                        <span>Re-auth</span>
+                      </>
+                    ) : (
+                      "Belum Terhubung"
+                    )}
                   </span>
                 </div>
-                <h3 className="font-bold text-slate-900 mt-4 text-base">YouTube Shorts</h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  {yt?.display_name ? `Channel: ${yt.display_name}` : "Upload otomatis dengan status rilis terjadwal atomik."}
-                </p>
+
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">YouTube Shorts</h3>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    {yt?.display_name ? (
+                      <span className="font-semibold text-slate-800">Channel: {yt.display_name}</span>
+                    ) : (
+                      "Penerbitan otomatis langsung via YouTube Data API v3 dengan status publishAt atomik."
+                    )}
+                  </p>
+                </div>
 
                 {yt?.last_test && (
-                  <div className="mt-3 text-[11px] text-slate-400">
-                    Uji: {yt.last_test.ok ? "✅ Berhasil" : `❌ ${yt.last_test.error?.message || "Gagal"}`} ({new Date(yt.last_test.at).toLocaleTimeString("id-ID")})
+                  <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100 text-[11px] text-slate-600">
+                    <span className="font-semibold">Uji Terakhir: </span>
+                    {yt.last_test.ok ? (
+                      <span className="text-emerald-700 font-medium">Berhasil ({new Date(yt.last_test.at).toLocaleTimeString("id-ID")})</span>
+                    ) : (
+                      <span className="text-rose-600">{yt.last_test.error?.message || "Gagal"}</span>
+                    )}
                   </div>
                 )}
               </div>
 
-              <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col gap-2">
+              <div className="mt-6 pt-4 border-t border-slate-100">
                 {!isConnected ? (
                   <button
                     onClick={() => handleOAuthAuthorize("youtube")}
-                    className="w-full py-2 px-3 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold transition"
+                    className="w-full py-2.5 px-3.5 rounded-xl bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white text-xs font-semibold transition shadow-xs flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    Hubungkan dengan Google
+                    <Youtube className="w-4 h-4" />
+                    <span>Hubungkan dengan Google</span>
                   </button>
                 ) : (
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleTestConnection("youtube")}
-                      className="flex-1 py-1.5 px-3 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      disabled={testingPlatform === "youtube"}
+                      className="flex-1 py-2 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 transition flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      Uji
+                      <RefreshCw className={`w-3.5 h-3.5 ${testingPlatform === "youtube" ? "animate-spin" : ""}`} />
+                      <span>Uji</span>
                     </button>
                     <button
                       onClick={() => handleDisconnect("youtube")}
-                      className="py-1.5 px-3 rounded-lg border border-rose-200 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                      className="py-2 px-3 rounded-lg border border-rose-200 hover:bg-rose-50 text-xs font-medium text-rose-600 transition flex items-center justify-center gap-1 cursor-pointer"
                     >
-                      Putuskan
+                      <Unplug className="w-3.5 h-3.5" />
+                      <span>Putuskan</span>
                     </button>
                   </div>
                 )}
@@ -268,64 +341,92 @@ function ConnectionsContent() {
           );
         })()}
 
-        {/* 2. Instagram */}
+        {/* ==================== 2. Instagram ==================== */}
         {(() => {
           const ig = connections.find((c) => c.platform === "instagram");
           const isConnected = ig?.status === "active";
           const needsReauth = ig?.status === "needs_reauth";
 
           return (
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 flex flex-col justify-between shadow-sm">
-              <div>
+            <div className="bg-white rounded-2xl border border-slate-200/80 p-6 flex flex-col justify-between shadow-xs hover:shadow-sm transition-shadow">
+              <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-fuchsia-600 flex items-center justify-center text-xl text-white font-bold">
-                    📸
+                  <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 flex items-center justify-center text-white shadow-2xs">
+                    <Instagram className="w-6 h-6" />
                   </div>
                   <span
-                    className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
+                    className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-semibold border ${
                       isConnected
-                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                         : needsReauth
-                        ? "bg-amber-50 text-amber-700 border border-amber-200"
-                        : "bg-slate-100 text-slate-500"
+                        ? "bg-amber-50 text-amber-700 border-amber-200"
+                        : "bg-slate-100 text-slate-500 border-slate-200"
                     }`}
                   >
-                    {isConnected ? "Aktif" : needsReauth ? "Perlu Re-auth" : "Belum Terhubung"}
+                    {isConnected ? (
+                      <>
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        <span>Aktif</span>
+                      </>
+                    ) : needsReauth ? (
+                      <>
+                        <AlertTriangle className="w-3 h-3 text-amber-600" />
+                        <span>Re-auth</span>
+                      </>
+                    ) : (
+                      "Belum Terhubung"
+                    )}
                   </span>
                 </div>
-                <h3 className="font-bold text-slate-900 mt-4 text-base">Instagram Reels</h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  {ig?.display_name ? `Akun: ${ig.display_name}` : "Penerbitan 2 fase dengan proteksi anti-duplicate posting."}
-                </p>
+
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">Instagram Reels</h3>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    {ig?.display_name ? (
+                      <span className="font-semibold text-slate-800">Akun: {ig.display_name}</span>
+                    ) : (
+                      "Penerbitan 2 fase (container creation & publish) dengan worker laptop."
+                    )}
+                  </p>
+                </div>
 
                 {ig?.last_test && (
-                  <div className="mt-3 text-[11px] text-slate-400">
-                    Uji: {ig.last_test.ok ? "✅ Berhasil" : `❌ ${ig.last_test.error?.message || "Gagal"}`} ({new Date(ig.last_test.at).toLocaleTimeString("id-ID")})
+                  <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100 text-[11px] text-slate-600">
+                    <span className="font-semibold">Uji Terakhir: </span>
+                    {ig.last_test.ok ? (
+                      <span className="text-emerald-700 font-medium">Berhasil ({new Date(ig.last_test.at).toLocaleTimeString("id-ID")})</span>
+                    ) : (
+                      <span className="text-rose-600">{ig.last_test.error?.message || "Gagal"}</span>
+                    )}
                   </div>
                 )}
               </div>
 
-              <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col gap-2">
+              <div className="mt-6 pt-4 border-t border-slate-100">
                 {!isConnected ? (
                   <button
                     onClick={() => handleOAuthAuthorize("instagram")}
-                    className="w-full py-2 px-3 rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 hover:opacity-95 text-white text-xs font-semibold transition"
+                    className="w-full py-2.5 px-3.5 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:opacity-95 text-white text-xs font-semibold transition shadow-xs flex items-center justify-center gap-2 cursor-pointer"
                   >
-                    Hubungkan dengan Meta
+                    <Instagram className="w-4 h-4" />
+                    <span>Hubungkan dengan Meta</span>
                   </button>
                 ) : (
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleTestConnection("instagram")}
-                      className="flex-1 py-1.5 px-3 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      disabled={testingPlatform === "instagram"}
+                      className="flex-1 py-2 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 transition flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      Uji
+                      <RefreshCw className={`w-3.5 h-3.5 ${testingPlatform === "instagram" ? "animate-spin" : ""}`} />
+                      <span>Uji</span>
                     </button>
                     <button
                       onClick={() => handleDisconnect("instagram")}
-                      className="py-1.5 px-3 rounded-lg border border-rose-200 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                      className="py-2 px-3 rounded-lg border border-rose-200 hover:bg-rose-50 text-xs font-medium text-rose-600 transition flex items-center justify-center gap-1 cursor-pointer"
                     >
-                      Putuskan
+                      <Unplug className="w-3.5 h-3.5" />
+                      <span>Putuskan</span>
                     </button>
                   </div>
                 )}
@@ -334,66 +435,100 @@ function ConnectionsContent() {
           );
         })()}
 
-        {/* 3. TikTok via Buffer */}
+        {/* ==================== 3. TikTok (Buffer) ==================== */}
         {(() => {
           const tt = connections.find((c) => c.platform === "tiktok");
           const isConnected = tt?.status === "active";
           const channelName = tt?.details?.buffer_channel_name || tt?.display_name;
 
           return (
-            <div className="bg-white rounded-2xl border border-slate-200 p-6 flex flex-col justify-between shadow-sm">
-              <div>
+            <div className="bg-white rounded-2xl border border-slate-200/80 p-6 flex flex-col justify-between shadow-xs hover:shadow-sm transition-shadow">
+              <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <div className="w-10 h-10 rounded-xl bg-slate-900 flex items-center justify-center text-xl text-white font-bold">
-                    🎵
+                  <div className="w-12 h-12 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-white shadow-2xs">
+                    <Music2 className="w-6 h-6" />
                   </div>
                   <span
-                    className={`text-xs px-2.5 py-1 rounded-full font-semibold ${
+                    className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-semibold border ${
                       isConnected
-                        ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                        : "bg-slate-100 text-slate-500"
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        : "bg-slate-100 text-slate-500 border-slate-200"
                     }`}
                   >
-                    {isConnected ? "Aktif" : "Belum Terhubung"}
+                    {isConnected ? (
+                      <>
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        <span>Aktif</span>
+                      </>
+                    ) : (
+                      "Belum Terhubung"
+                    )}
                   </span>
                 </div>
-                <h3 className="font-bold text-slate-900 mt-4 text-base">TikTok (via Buffer)</h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  {channelName ? `Channel: ${channelName}` : "Penerbitan otomatis via akun gratis Buffer (jendela 10 video)."}
-                </p>
+
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">TikTok (via Buffer)</h3>
+                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                    {channelName ? (
+                      <span className="font-semibold text-slate-800">Channel: {channelName}</span>
+                    ) : (
+                      "Penerbitan gratis ke profil TikTok menggunakan Buffer API key."
+                    )}
+                  </p>
+                </div>
 
                 {tt?.last_test && (
-                  <div className="mt-3 text-[11px] text-slate-400">
-                    Uji: {tt.last_test.ok ? "✅ Berhasil" : `❌ ${tt.last_test.error?.message || "Gagal"}`} ({new Date(tt.last_test.at).toLocaleTimeString("id-ID")})
+                  <div className="p-2.5 rounded-lg bg-slate-50 border border-slate-100 text-[11px] text-slate-600">
+                    <span className="font-semibold">Uji Terakhir: </span>
+                    {tt.last_test.ok ? (
+                      <span className="text-emerald-700 font-medium">Berhasil ({new Date(tt.last_test.at).toLocaleTimeString("id-ID")})</span>
+                    ) : (
+                      <span className="text-rose-600">{tt.last_test.error?.message || "Gagal"}</span>
+                    )}
                   </div>
                 )}
               </div>
 
-              <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col gap-2">
+              <div className="mt-6 pt-4 border-t border-slate-100">
                 {!isConnected ? (
                   <div className="space-y-3">
-                    <input
-                      type="password"
-                      placeholder="Tempel Buffer API Key..."
-                      value={bufferApiKey}
-                      onChange={(e) => setBufferApiKey(e.target.value)}
-                      className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-[11px] font-semibold text-slate-600">Buffer Access Token</label>
+                        <a
+                          href="https://buffer.com/developers/apps"
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-[11px] text-indigo-600 hover:underline flex items-center gap-0.5"
+                        >
+                          Dapatkan Key <ExternalLink className="w-2.5 h-2.5" />
+                        </a>
+                      </div>
+                      <input
+                        type="password"
+                        placeholder="Tempel Buffer API Key..."
+                        value={bufferApiKey}
+                        onChange={(e) => setBufferApiKey(e.target.value)}
+                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50/50 focus:bg-white"
+                      />
+                    </div>
 
                     {bufferChannels.length === 0 ? (
                       <button
                         onClick={handleFetchBufferChannels}
-                        disabled={loadingChannels || !bufferApiKey}
-                        className="w-full py-2 px-3 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-semibold transition"
+                        disabled={loadingChannels || !bufferApiKey.trim()}
+                        className="w-full py-2.5 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-semibold transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
                       >
-                        {loadingChannels ? "Memeriksa..." : "Verifikasi & Ambil Channel"}
+                        <KeyRound className="w-3.5 h-3.5" />
+                        <span>{loadingChannels ? "Memverifikasi..." : "Verifikasi & Pilih Channel"}</span>
                       </button>
                     ) : (
                       <div className="space-y-2">
+                        <label className="block text-[11px] font-semibold text-slate-600">Pilih Channel TikTok</label>
                         <select
                           value={selectedChannelId}
                           onChange={(e) => setSelectedChannelId(e.target.value)}
-                          className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
                         >
                           {bufferChannels.map((ch) => (
                             <option key={ch.id} value={ch.id}>
@@ -404,7 +539,7 @@ function ConnectionsContent() {
                         <button
                           onClick={handleSaveTikTokChannel}
                           disabled={loadingChannels}
-                          className="w-full py-2 px-3 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition"
+                          className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition cursor-pointer"
                         >
                           Simpan Channel
                         </button>
@@ -419,15 +554,18 @@ function ConnectionsContent() {
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleTestConnection("tiktok")}
-                      className="flex-1 py-1.5 px-3 rounded-lg border border-slate-200 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                      disabled={testingPlatform === "tiktok"}
+                      className="flex-1 py-2 px-3 rounded-lg border border-slate-200 hover:bg-slate-50 text-xs font-medium text-slate-700 transition flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      Uji
+                      <RefreshCw className={`w-3.5 h-3.5 ${testingPlatform === "tiktok" ? "animate-spin" : ""}`} />
+                      <span>Uji</span>
                     </button>
                     <button
                       onClick={() => handleDisconnect("tiktok")}
-                      className="py-1.5 px-3 rounded-lg border border-rose-200 text-xs font-medium text-rose-600 hover:bg-rose-50"
+                      className="py-2 px-3 rounded-lg border border-rose-200 hover:bg-rose-50 text-xs font-medium text-rose-600 transition flex items-center justify-center gap-1 cursor-pointer"
                     >
-                      Putuskan
+                      <Unplug className="w-3.5 h-3.5" />
+                      <span>Putuskan</span>
                     </button>
                   </div>
                 )}
@@ -442,7 +580,7 @@ function ConnectionsContent() {
 
 export default function ConnectionsPage() {
   return (
-    <Suspense fallback={<div className="py-12 text-center text-slate-500 text-sm">Memuat koneksi...</div>}>
+    <Suspense fallback={<div className="py-16 text-center text-slate-500 text-sm">Memuat status koneksi akun...</div>}>
       <ConnectionsContent />
     </Suspense>
   );

@@ -4,6 +4,30 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { formatWibDateTime } from "@bulk-socmed/shared";
+import {
+  ArrowLeft,
+  Play,
+  CheckCircle2,
+  Clock,
+  AlertTriangle,
+  AlertCircle,
+  RefreshCw,
+  Calendar,
+  Film,
+  Hash,
+  Type,
+  FileText,
+  Trash2,
+  ExternalLink,
+  Save,
+  ShieldCheck,
+  Video,
+  Activity,
+  Layers,
+  Sparkles,
+  Youtube,
+  Instagram,
+} from "lucide-react";
 
 interface Target {
   id: number;
@@ -69,10 +93,11 @@ export default function PostDetailPage() {
   const [caption, setCaption] = useState("");
   const [hashtags, setHashtags] = useState("");
   const [saving, setSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
-  // Video playback on demand
+  // Video playback on demand (saves egress)
   const [playVideo, setPlayVideo] = useState(false);
+  const [retryingTargetId, setRetryingTargetId] = useState<number | null>(null);
 
   async function loadPost() {
     try {
@@ -102,7 +127,7 @@ export default function PostDetailPage() {
   async function handleSaveMetadata(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
-    setSaveMessage(null);
+    setSaveStatus(null);
     try {
       const res = await fetch(`/api/v1/posts/${postId}`, {
         method: "PATCH",
@@ -115,21 +140,34 @@ export default function PostDetailPage() {
       });
 
       if (res.ok) {
-        setSaveMessage("Perubahan berhasil disimpan! Sinkronisasi otomatis dikirim ke platform.");
+        setSaveStatus({
+          type: "success",
+          message: "Perubahan metadata berhasil disimpan! Data sinkron dengan jadwal worker.",
+        });
         loadPost();
       } else {
         const err = await res.json();
-        setSaveMessage(`Gagal menyimpan: ${err.error?.message}`);
+        setSaveStatus({
+          type: "error",
+          message: `Gagal menyimpan: ${err.error?.message || "Kesalahan tidak diketahui"}`,
+        });
       }
     } catch {
-      setSaveMessage("Terjadi kesalahan saat menyimpan.");
+      setSaveStatus({
+        type: "error",
+        message: "Terjadi kesalahan jaringan saat menyimpan data.",
+      });
     } finally {
       setSaving(false);
     }
   }
 
   async function handleCancelPost() {
-    if (!confirm("Batalkan seluruh jadwal publikasi untuk video ini? Slot jadwal akan kosong kembali.")) {
+    if (
+      !confirm(
+        "Apakah Anda yakin ingin membatalkan jadwal publikasi ini? Slot jadwal akan dikosongkan dan worker tidak akan memproses video ini."
+      )
+    ) {
       return;
     }
     try {
@@ -137,15 +175,18 @@ export default function PostDetailPage() {
         method: "DELETE",
       });
       if (res.ok) {
-        alert("Posting berhasil dibatalkan.");
         router.push("/");
+      } else {
+        const err = await res.json();
+        alert(`Gagal membatalkan: ${err.error?.message || "Kesalahan server"}`);
       }
     } catch {
-      alert("Gagal membatalkan posting.");
+      alert("Terjadi kesalahan jaringan saat membatalkan posting.");
     }
   }
 
   async function handleRetryTarget(targetId: number) {
+    setRetryingTargetId(targetId);
     try {
       const res = await fetch(`/api/v1/posts/${postId}/retry`, {
         method: "POST",
@@ -153,249 +194,494 @@ export default function PostDetailPage() {
         body: JSON.stringify({ target_id: targetId }),
       });
       if (res.ok) {
-        setSaveMessage("Target dijadwalkan untuk dicoba ulang.");
-        loadPost();
+        setSaveStatus({
+          type: "success",
+          message: "Target platform dijadwalkan ulang untuk diproses worker laptop.",
+        });
+        await loadPost();
       } else {
         const err = await res.json();
         alert(`Gagal mencoba ulang: ${err.error?.message}`);
       }
     } catch {
-      alert("Terjadi kesalahan jaringan.");
+      alert("Terjadi kesalahan jaringan saat mencoba ulang.");
+    } finally {
+      setRetryingTargetId(null);
     }
   }
 
   if (loading) {
     return (
-      <div className="py-12 text-center text-slate-500 text-sm">
-        Memuat detail posting...
+      <div className="py-20 flex flex-col items-center justify-center text-center space-y-4">
+        <div className="w-10 h-10 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
+        <p className="text-sm font-medium text-slate-600">Memuat detail jadwal posting...</p>
       </div>
     );
   }
 
   if (error || !post) {
     return (
-      <div className="py-12 text-center text-rose-600 text-sm">
-        {error || "Posting tidak ditemukan."}
-        <div className="mt-4">
-          <Link href="/" className="text-indigo-600 underline">
-            &larr; Kembali ke Antrean
-          </Link>
+      <div className="max-w-md mx-auto py-16 text-center space-y-4">
+        <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
+          <AlertCircle className="w-6 h-6" />
         </div>
+        <h2 className="text-lg font-bold text-slate-900">Posting Tidak Ditemukan</h2>
+        <p className="text-sm text-slate-500">{error || "Posting mungkin telah dibatalkan atau dihapus."}</p>
+        <Link
+          href="/"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Kembali ke Antrean
+        </Link>
       </div>
     );
   }
 
   const isCancelled = post.state === "cancelled";
+  const allPublished = post.targets.length > 0 && post.targets.every((t) => t.status === "published");
+  const hasFailed = post.targets.some((t) => t.status === "failed" || t.status === "missed");
+
+  const hashtagList = hashtags
+    .split(/\s+/)
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0);
 
   return (
-    <div className="space-y-6">
-      {/* Header Bar */}
-      <div className="flex items-center justify-between">
-        <div>
-          <Link href="/" className="text-xs text-indigo-600 hover:underline flex items-center gap-1 mb-1">
-            &larr; Kembali ke antrean
-          </Link>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            {post.title || "Detail Video"}
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">
-            Jadwal: <span className="font-semibold text-slate-800">{formatWibDateTime(new Date(post.due_at))}</span>
-            {post.slot_key && <span className="ml-2 px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-mono text-[11px]">{post.slot_key}</span>}
-          </p>
+    <div className="space-y-6 max-w-5xl mx-auto">
+      {/* Top Header Card */}
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-800 transition mb-1"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Kembali ke Antrean
+            </Link>
+            <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+              {post.title || "Detail Jadwal Video"}
+            </h1>
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 pt-1">
+              <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-700 font-medium px-2 py-0.5 rounded-md">
+                <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                {formatWibDateTime(new Date(post.due_at))}
+              </span>
+              {post.slot_key && (
+                <span className="font-mono text-[11px] bg-indigo-50 text-indigo-700 font-semibold px-2 py-0.5 rounded-md border border-indigo-100">
+                  Slot: {post.slot_key}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 self-start sm:self-center">
+            {/* Status Pill */}
+            <span
+              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold border ${
+                allPublished
+                  ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                  : isCancelled
+                  ? "bg-rose-50 text-rose-700 border-rose-200"
+                  : hasFailed
+                  ? "bg-amber-50 text-amber-700 border-amber-200"
+                  : "bg-blue-50 text-blue-700 border-blue-200"
+              }`}
+            >
+              {allPublished ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Selesai Dipublikasikan
+                </>
+              ) : isCancelled ? (
+                <>
+                  <AlertCircle className="w-3.5 h-3.5" />
+                  Dibatalkan
+                </>
+              ) : hasFailed ? (
+                <>
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  Perlu Perhatian
+                </>
+              ) : (
+                <>
+                  <Clock className="w-3.5 h-3.5" />
+                  Dalam Antrean
+                </>
+              )}
+            </span>
+
+            {/* Cancel Action */}
+            {!isCancelled && !allPublished && (
+              <button
+                type="button"
+                onClick={handleCancelPost}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-rose-200 text-rose-700 hover:bg-rose-50 text-xs font-semibold transition"
+                title="Batalkan publikasi video ini"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Batalkan</span>
+              </button>
+            )}
+
+            {/* Refresh Button */}
+            <button
+              type="button"
+              onClick={loadPost}
+              className="p-2 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-100 transition"
+              title="Perbarui data"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <span
-            className={`text-xs px-3 py-1 rounded-full font-semibold ${
-              post.state === "active"
-                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                : post.state === "cancelled"
-                ? "bg-rose-50 text-rose-700 border border-rose-200"
-                : "bg-slate-100 text-slate-600"
+        {/* Feedback message */}
+        {saveStatus && (
+          <div
+            className={`p-3.5 rounded-xl text-xs font-medium flex items-center gap-2.5 ${
+              saveStatus.type === "success"
+                ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                : "bg-rose-50 text-rose-800 border border-rose-200"
             }`}
           >
-            {post.state === "active" ? "Aktif" : post.state === "cancelled" ? "Dibatalkan" : "Draft"}
-          </span>
-
-          {!isCancelled && (
-            <button
-              onClick={handleCancelPost}
-              className="text-xs px-3 py-1.5 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 font-medium transition"
-            >
-              Batalkan Jadwal
-            </button>
-          )}
-        </div>
+            {saveStatus.type === "success" ? (
+              <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+            ) : (
+              <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
+            )}
+            <span>{saveStatus.message}</span>
+          </div>
+        )}
       </div>
 
-      {saveMessage && (
-        <div className="p-3 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-xs font-medium">
-          {saveMessage}
-        </div>
-      )}
+      {/* Main Grid: Video Preview on Left, Metadata Editor on Right */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Left: Video Preview & Specs (5 columns) */}
+        <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+              <Film className="w-4 h-4 text-indigo-600" />
+              Pratinjau Video Vertikal
+            </h3>
+            <span className="text-[11px] font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded">9:16</span>
+          </div>
 
-      {/* Main Grid: Video Player on left, Metadata Form on right */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Video Preview Card */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
-          <h3 className="font-bold text-slate-900 text-sm">Pratinjau Video</h3>
-
-          <div className="aspect-[9/16] max-h-[380px] bg-slate-900 rounded-xl overflow-hidden flex items-center justify-center relative">
+          {/* Video Container */}
+          <div className="w-full aspect-[9/16] max-h-[460px] mx-auto bg-slate-950 rounded-2xl overflow-hidden shadow-inner flex flex-col items-center justify-center relative border border-slate-800">
             {playVideo && post.video.preview_url ? (
               <video
                 src={post.video.preview_url}
                 controls
                 autoPlay
+                playsInline
                 className="w-full h-full object-contain"
               />
             ) : (
-              <div className="text-center p-6 text-white space-y-3">
-                <div className="w-12 h-12 rounded-full bg-white/20 flex items-center justify-center mx-auto text-xl">
-                  ▶
+              <div className="text-center p-6 text-white space-y-4 flex flex-col items-center justify-center">
+                <div className="w-16 h-16 rounded-2xl bg-indigo-600/30 border border-indigo-400/40 flex items-center justify-center text-indigo-300 shadow-lg">
+                  <Play className="w-8 h-8 fill-current ml-1" />
                 </div>
-                <p className="text-xs text-slate-300">
-                  Pratinjau video dimuat secara on-demand untuk menghemat kuota egress Supabase.
-                </p>
+                <div className="space-y-1.5 max-w-[220px]">
+                  <p className="text-xs font-bold text-slate-100">Pratinjau On-Demand</p>
+                  <p className="text-[11px] text-slate-400 leading-relaxed">
+                    Video tidak dimuat otomatis demi menghemat kuota download egress Supabase Anda.
+                  </p>
+                </div>
                 <button
                   type="button"
                   onClick={() => setPlayVideo(true)}
-                  className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-md transition"
                 >
+                  <Play className="w-3.5 h-3.5 fill-current" />
                   Putar Video
                 </button>
               </div>
             )}
           </div>
 
-          <div className="text-[11px] text-slate-500 space-y-1">
-            <div>Ukuran: {(post.video.size_bytes / (1024 * 1024)).toFixed(1)} MB</div>
+          {/* Video Technical Specs */}
+          <div className="bg-slate-50 rounded-xl p-3.5 border border-slate-100 space-y-2 text-xs">
+            <div className="flex items-center justify-between text-slate-600">
+              <span className="text-slate-400">Ukuran File:</span>
+              <span className="font-semibold text-slate-800">
+                {(post.video.size_bytes / (1024 * 1024)).toFixed(1)} MB
+              </span>
+            </div>
             {post.video.duration_ms && (
-              <div>Durasi: {(post.video.duration_ms / 1000).toFixed(0)} detik</div>
+              <div className="flex items-center justify-between text-slate-600">
+                <span className="text-slate-400">Durasi:</span>
+                <span className="font-semibold text-slate-800">
+                  {(post.video.duration_ms / 1000).toFixed(0)} detik
+                </span>
+              </div>
             )}
             {post.video.width && post.video.height && (
-              <div>Resolusi: {post.video.width} × {post.video.height} (9:16 vertikal)</div>
+              <div className="flex items-center justify-between text-slate-600">
+                <span className="text-slate-400">Resolusi:</span>
+                <span className="font-semibold text-slate-800">
+                  {post.video.width} × {post.video.height} (Vertikal)
+                </span>
+              </div>
             )}
+            <div className="flex items-center justify-between text-slate-600 pt-1 border-t border-slate-200/60">
+              <span className="text-slate-400">Storage Path:</span>
+              <span className="font-mono text-[10px] text-slate-500 truncate max-w-[180px]" title={post.video.object_path}>
+                {post.video.object_path}
+              </span>
+            </div>
           </div>
         </div>
 
-        {/* Metadata Editor */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-4">
-          <h3 className="font-bold text-slate-900 text-sm">Informasi Konten</h3>
+        {/* Right: Content Information & Metadata Form (7 columns) */}
+        <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-5">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+              <FileText className="w-4 h-4 text-indigo-600" />
+              Metadata & Teks Konten
+            </h3>
+            <span className="text-xs text-slate-400">Dapat disunting sebelum publish</span>
+          </div>
 
           <form onSubmit={handleSaveMetadata} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Judul Video (YouTube Shorts & Internal)
-              </label>
+            {/* Title Field */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Type className="w-3.5 h-3.5 text-slate-400" />
+                  Judul Video (YouTube Shorts & Internal)
+                </label>
+                <span className="text-[11px] font-mono text-slate-400">{title.length} / 100</span>
+              </div>
               <input
                 type="text"
-                disabled={isCancelled}
+                disabled={isCancelled || allPublished}
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 maxLength={100}
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-50"
+                placeholder="Judul menarik untuk video Anda..."
+                className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-500 transition"
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Caption
-              </label>
+            {/* Caption Field */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <FileText className="w-3.5 h-3.5 text-slate-400" />
+                  Deskripsi / Caption (Instagram, TikTok, YouTube)
+                </label>
+                <span className="text-[11px] font-mono text-slate-400">{caption.length} / 2200</span>
+              </div>
               <textarea
-                disabled={isCancelled}
+                disabled={isCancelled || allPublished}
                 value={caption}
                 onChange={(e) => setCaption(e.target.value)}
+                maxLength={2200}
                 rows={5}
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-50"
+                placeholder="Tulis deskripsi konten Anda di sini..."
+                className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-500 transition resize-none leading-relaxed"
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Hashtag (#shorts #reels)
-              </label>
+            {/* Hashtags Field */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Hash className="w-3.5 h-3.5 text-slate-400" />
+                  Hashtag Tambahan
+                </label>
+                <span className="text-[11px] text-slate-400">Pisahkan dengan spasi</span>
+              </div>
               <input
                 type="text"
-                disabled={isCancelled}
+                disabled={isCancelled || allPublished}
                 value={hashtags}
                 onChange={(e) => setHashtags(e.target.value)}
-                className="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-50"
+                placeholder="#shorts #reels #fyp"
+                className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-500 transition font-mono"
               />
+
+              {/* Hashtag chips preview */}
+              {hashtagList.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pt-2">
+                  {hashtagList.map((tag, idx) => (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-mono text-[11px] font-medium border border-indigo-100"
+                    >
+                      {tag.startsWith("#") ? tag : `#${tag}`}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
-            {!isCancelled && (
-              <button
-                type="submit"
-                disabled={saving}
-                className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-sm transition disabled:opacity-50"
-              >
-                {saving ? "Menyimpan..." : "Simpan Perubahan"}
-              </button>
+            {/* Submit Button */}
+            {!isCancelled && !allPublished && (
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs sm:text-sm font-semibold rounded-xl shadow-xs transition disabled:opacity-50"
+                >
+                  {saving ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      Menyimpan Perubahan...
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" />
+                      Simpan Perubahan
+                    </>
+                  )}
+                </button>
+              </div>
             )}
           </form>
         </div>
       </div>
 
       {/* Target Status Cards per Platform */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
-        <h3 className="font-bold text-slate-900 text-sm">Status Target Platform</h3>
+      <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+            <Layers className="w-4 h-4 text-indigo-600" />
+            Status Publikasi Per Platform
+          </h3>
+          <span className="text-xs text-slate-400">Diproses otomatis oleh worker laptop</span>
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {post.targets.map((target) => {
             const isFailed = target.status === "failed" || target.status === "missed";
+            const isPublished = target.status === "published";
+            const isUploading = target.status === "uploading";
+            const isAwaiting = target.status === "awaiting_platform";
+            const isRetrying = retryingTargetId === target.id;
+
             return (
               <div
                 key={target.id}
-                className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex flex-col justify-between space-y-3"
+                className={`p-4 rounded-xl border flex flex-col justify-between space-y-4 transition ${
+                  isPublished
+                    ? "border-emerald-200 bg-emerald-50/30"
+                    : isFailed
+                    ? "border-rose-200 bg-rose-50/30"
+                    : isUploading
+                    ? "border-blue-200 bg-blue-50/30"
+                    : "border-slate-200 bg-slate-50/50"
+                }`}
               >
-                <div>
+                <div className="space-y-3">
+                  {/* Platform Brand Header */}
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs uppercase tracking-wider text-slate-700">
-                      {target.platform === "youtube"
-                        ? "YouTube Shorts"
-                        : target.platform === "instagram"
-                        ? "Instagram Reels"
-                        : "TikTok (Buffer)"}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {target.platform === "youtube" ? (
+                        <div className="w-7 h-7 rounded-lg bg-red-600 text-white flex items-center justify-center shadow-xs">
+                          <Youtube className="w-4 h-4" />
+                        </div>
+                      ) : target.platform === "instagram" ? (
+                        <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-amber-500 via-rose-500 to-purple-600 text-white flex items-center justify-center shadow-xs">
+                          <Instagram className="w-4 h-4" />
+                        </div>
+                      ) : (
+                        <div className="w-7 h-7 rounded-lg bg-slate-900 text-cyan-300 flex items-center justify-center font-black text-xs shadow-xs">
+                          TT
+                        </div>
+                      )}
+                      <div>
+                        <span className="font-bold text-xs text-slate-900">
+                          {target.platform === "youtube"
+                            ? "YouTube Shorts"
+                            : target.platform === "instagram"
+                            ? "Instagram Reels"
+                            : "TikTok (Buffer)"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Status Badge */}
                     <span
-                      className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${
-                        target.status === "published"
-                          ? "bg-emerald-50 text-emerald-700"
-                          : target.status === "uploading"
-                          ? "bg-blue-50 text-blue-700"
-                          : target.status === "awaiting_platform"
-                          ? "bg-purple-50 text-purple-700"
+                      className={`text-[11px] px-2.5 py-0.5 rounded-full font-bold border inline-flex items-center gap-1 ${
+                        isPublished
+                          ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                          : isUploading
+                          ? "bg-blue-100 text-blue-800 border-blue-300"
+                          : isAwaiting
+                          ? "bg-purple-100 text-purple-800 border-purple-300"
                           : isFailed
-                          ? "bg-rose-50 text-rose-700"
-                          : "bg-slate-200 text-slate-700"
+                          ? "bg-rose-100 text-rose-800 border-rose-300"
+                          : "bg-slate-100 text-slate-700 border-slate-200"
                       }`}
                     >
+                      {isPublished && <CheckCircle2 className="w-3 h-3 text-emerald-600" />}
+                      {isUploading && <RefreshCw className="w-3 h-3 animate-spin text-blue-600" />}
+                      {isAwaiting && <Clock className="w-3 h-3 text-purple-600" />}
+                      {isFailed && <AlertCircle className="w-3 h-3 text-rose-600" />}
                       {target.status}
                     </span>
                   </div>
 
-                  <div className="mt-2 text-xs text-slate-600 space-y-1">
-                    {target.step && <div>Langkah: <span className="font-mono text-[11px] text-slate-800">{target.step}</span></div>}
+                  {/* Step & Details */}
+                  <div className="text-xs space-y-1.5 text-slate-600 bg-white/70 rounded-lg p-2.5 border border-slate-100">
+                    {target.step && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Langkah:</span>
+                        <span className="font-mono text-[11px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">
+                          {target.step}
+                        </span>
+                      </div>
+                    )}
                     {target.external_id && (
-                      <div className="truncate">ID: <span className="font-mono text-[11px]">{target.external_id}</span></div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">ID Post:</span>
+                        <span
+                          className="font-mono text-[10px] text-indigo-700 truncate max-w-[140px]"
+                          title={target.external_id}
+                        >
+                          {target.external_id}
+                        </span>
+                      </div>
                     )}
                     {target.pending_action && (
-                      <div className="text-amber-700 font-medium">Tindakan: {target.pending_action}</div>
+                      <div className="text-amber-700 text-[11px] font-medium flex items-center gap-1 pt-1">
+                        <Clock className="w-3 h-3 text-amber-500" />
+                        Tindakan: {target.pending_action}
+                      </div>
                     )}
-                    {target.last_error_message && (
-                      <div className="text-rose-600 text-[11px] font-medium mt-1">
-                        Galat: {target.last_error_message}
+                    {target.published_at && (
+                      <div className="text-emerald-700 text-[11px] font-medium flex items-center gap-1 pt-1">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                        Rilis: {new Date(target.published_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })} WIB
                       </div>
                     )}
                   </div>
+
+                  {/* Error Notification Box */}
+                  {target.last_error_message && (
+                    <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px] font-medium space-y-0.5">
+                      <div className="font-bold flex items-center gap-1 text-rose-800">
+                        <AlertTriangle className="w-3 h-3 text-rose-600" />
+                        Galat Upload:
+                      </div>
+                      <p className="line-clamp-2 leading-relaxed">{target.last_error_message}</p>
+                    </div>
+                  )}
                 </div>
 
+                {/* Retry Button for Failed Targets */}
                 {isFailed && (
                   <button
+                    type="button"
+                    disabled={isRetrying}
                     onClick={() => handleRetryTarget(target.id)}
-                    className="w-full py-1.5 px-2 bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-semibold rounded-lg transition"
+                    className="w-full py-2 px-3 bg-slate-900 hover:bg-slate-800 active:bg-black text-white text-xs font-semibold rounded-lg transition inline-flex items-center justify-center gap-1.5 shadow-xs disabled:opacity-50"
                   >
-                    Coba Lagi
+                    <RefreshCw className={`w-3.5 h-3.5 ${isRetrying ? "animate-spin" : ""}`} />
+                    {isRetrying ? "Menjadwalkan Ulang..." : "Coba Lagi Target Ini"}
                   </button>
                 )}
               </div>
@@ -404,26 +690,43 @@ export default function PostDetailPage() {
         </div>
       </div>
 
-      {/* Target Events Timeline */}
-      {post.events.length > 0 && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm space-y-4">
-          <h3 className="font-bold text-slate-900 text-sm">Riwayat Kejadian (Audit Log)</h3>
-          <div className="divide-y divide-slate-100">
+      {/* Target Events Timeline (Audit Log) */}
+      {post.events && post.events.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+              <Activity className="w-4 h-4 text-indigo-600" />
+              Riwayat Peristiwa (Audit Log)
+            </h3>
+            <span className="text-xs text-slate-400">{post.events.length} kejadian tercatat</span>
+          </div>
+
+          <div className="relative pl-4 border-l-2 border-slate-200 space-y-4">
             {post.events.map((ev) => (
-              <div key={ev.id} className="py-2.5 flex items-center justify-between text-xs">
-                <div className="flex items-center gap-3">
-                  <span className="font-mono text-[11px] text-slate-400">
-                    {new Date(ev.created_at).toLocaleTimeString("id-ID")}
-                  </span>
-                  <span className="font-semibold text-slate-800">{ev.event}</span>
-                  {ev.from_status && ev.to_status && (
-                    <span className="text-slate-500 font-mono text-[11px]">
-                      {ev.from_status} &rarr; {ev.to_status}
+              <div key={ev.id} className="relative group">
+                {/* Dot marker */}
+                <div className="absolute -left-[21px] top-1.5 w-2.5 h-2.5 rounded-full bg-indigo-500 border-2 border-white ring-2 ring-slate-100 group-hover:bg-indigo-600 transition"></div>
+
+                <div className="bg-slate-50/70 hover:bg-slate-50 rounded-xl p-3 border border-slate-100 transition space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-900">{ev.event}</span>
+                      {ev.from_status && ev.to_status && (
+                        <span className="text-slate-500 font-mono text-[11px] bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                          {ev.from_status} &rarr; {ev.to_status}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-[11px] font-mono text-slate-400">
+                      {new Date(ev.created_at).toLocaleTimeString("id-ID")} WIB
                     </span>
+                  </div>
+
+                  {ev.detail && Object.keys(ev.detail).length > 0 && (
+                    <div className="text-[11px] text-slate-500 font-mono truncate">
+                      {JSON.stringify(ev.detail)}
+                    </div>
                   )}
-                </div>
-                <div className="text-[11px] text-slate-400">
-                  {new Date(ev.created_at).toLocaleDateString("id-ID")}
                 </div>
               </div>
             ))}
