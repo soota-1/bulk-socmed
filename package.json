@@ -6,7 +6,8 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
-    "dev:web": "pnpm --filter web dev",
+    "sync:env": "node scripts/sync-env.js",
+    "dev:web": "node scripts/sync-env.js && pnpm --filter web dev",
     "dev:worker": "pnpm --filter worker dev",
     "check:env": "pnpm --filter worker exec tsx ../../scripts/doctor.ts",
     "lint": "pnpm -r lint",

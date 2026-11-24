@@ -59,9 +59,19 @@ export async function middleware(request: NextRequest) {
   }
 
   // 3. Authenticate Supabase session
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return new NextResponse(
+      "Konfigurasi Supabase belum terbaca di aplikasi web. Pastikan file .env di root proyek sudah terisi dan jalankan 'pnpm sync:env' atau 'pnpm dev:web'.",
+      { status: 500, headers: { "Content-Type": "text/plain; charset=utf-8" } }
+    );
+  }
+
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    supabaseAnonKey,
     {
       cookies: {
         get(name: string) {

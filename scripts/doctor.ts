@@ -11,8 +11,10 @@ import fs from "node:fs/promises";
 import { createClient } from "@supabase/supabase-js";
 import { parseEncryptionKey } from "../packages/shared/src/crypto";
 
-dotenv.config({ path: ".env" });
-dotenv.config({ path: "apps/worker/.env" });
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
+dotenv.config({ path: path.resolve(__dirname, "../apps/web/.env.local") });
+dotenv.config({ path: path.resolve(__dirname, "../apps/worker/.env") });
+dotenv.config();
 
 interface CheckItem {
   name: string;
