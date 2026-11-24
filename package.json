@@ -10,6 +10,7 @@
     "dev:web": "node scripts/sync-env.js && pnpm --filter web dev",
     "dev:worker": "pnpm --filter worker dev",
     "check:env": "pnpm --filter worker exec tsx ../../scripts/doctor.ts",
+    "create:owner": "pnpm --filter worker exec tsx ../../scripts/create-owner.ts",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
     "clean": "pnpm -r exec -- rimraf dist .next *.tsbuildinfo"
