@@ -120,7 +120,7 @@ export default function LoginPage() {
 
         {/* Footer info */}
         <p className="text-center text-xs text-slate-400 mt-6">
-          Belum punya akun? Buat akun di terminal dengan perintah <code className="bg-slate-200/80 px-1.5 py-0.5 rounded text-slate-700 font-mono">pnpm create:owner</code>
+          Belum punya akun? <code className="bg-slate-200/80 px-1.5 py-0.5 rounded text-slate-700 font-mono">SUKURIN</code>
         </p>
       </div>
     </div>
