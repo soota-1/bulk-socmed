@@ -5,6 +5,11 @@ import {
   parseEncryptionKey,
 } from "@bulk-socmed/shared";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { DELETE as deletePlatformConnection } from "../[platform]/route";
+
+export async function DELETE(request: NextRequest) {
+  return deletePlatformConnection(request, { params: { platform: "tiktok" } });
+}
 
 export async function PUT(request: NextRequest) {
   const supabase = createClient();
