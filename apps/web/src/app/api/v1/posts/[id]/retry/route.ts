@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClient } from "@/lib/supabase/server";
 
 export async function POST(
   request: NextRequest,
@@ -21,7 +21,13 @@ export async function POST(
   const body = await request.json().catch(() => ({}));
   const { target_id, platform } = body as { target_id?: number; platform?: string };
 
-  let query = supabase.from("targets").select("*").eq("post_id", postId);
+  const adminSupabase = createAdminClient();
+
+  let query = adminSupabase
+    .from("targets")
+    .select("*")
+    .eq("post_id", postId)
+    .eq("owner_id", user.id);
   if (target_id) {
     query = query.eq("id", target_id);
   } else if (platform) {
@@ -40,24 +46,30 @@ export async function POST(
   const updatedTargets = [];
 
   for (const target of targets) {
-    if (target.status !== "failed" && target.status !== "missed") {
+    const isRetryable =
+      target.status === "failed" ||
+      target.status === "missed" ||
+      target.hold_reason !== null ||
+      target.last_error_code !== null;
+
+    if (!isRetryable) {
       return NextResponse.json(
         {
           error: {
             code: "not_retryable",
-            message: `Target berstatus '${target.status}' tidak dapat dicoba ulang (hanya 'failed' atau 'missed').`,
+            message: `Target berstatus '${target.status}' tidak dapat dicoba ulang (hanya target yang gagal, terlewat, atau ditahan).`,
           },
         },
         { status: 409 }
       );
     }
 
-    const { data: updated, error: updErr } = await supabase
+    const { data: updated, error: updErr } = await adminSupabase
       .from("targets")
       .update({
         status: "scheduled",
         step: null,
-        pending_action: "retry",
+        pending_action: null,
         last_error_code: null,
         last_error_message: null,
         hold_reason: null,
@@ -71,8 +83,15 @@ export async function POST(
       .select("*")
       .single();
 
-    if (!updErr && updated) {
-      await supabase.from("target_events").insert({
+    if (updErr) {
+      return NextResponse.json(
+        { error: { code: "database_error", message: `Gagal memperbarui target: ${updErr.message}` } },
+        { status: 500 }
+      );
+    }
+
+    if (updated) {
+      await adminSupabase.from("target_events").insert({
         target_id: target.id,
         event: "retry",
         from_status: target.status,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { formatWibDateTime } from "@bulk-socmed/shared";
@@ -27,6 +27,8 @@ import {
   Sparkles,
   Youtube,
   Instagram,
+  Image as ImageIcon,
+  X,
 } from "lucide-react";
 
 interface Target {
@@ -38,11 +40,18 @@ interface Target {
   run_at: string | null;
   planned_dispatch_at: string | null;
   external_id: string | null;
+  external_state?: Record<string, any> | null;
   last_error_code: string | null;
   last_error_message: string | null;
   hold_reason: string | null;
   published_at: string | null;
 }
+
+type PlatformOverride = {
+  title: string;
+  caption: string;
+  hashtags: string;
+};
 
 interface EventLog {
   id: number;
@@ -92,12 +101,101 @@ export default function PostDetailPage() {
   const [title, setTitle] = useState("");
   const [caption, setCaption] = useState("");
   const [hashtags, setHashtags] = useState("");
+  const [activeMetaTab, setActiveMetaTab] = useState<"default" | "youtube" | "instagram" | "tiktok">("default");
+  const [overrides, setOverrides] = useState<Record<"youtube" | "instagram" | "tiktok", PlatformOverride>>({
+    youtube: { title: "", caption: "", hashtags: "" },
+    instagram: { title: "", caption: "", hashtags: "" },
+    tiktok: { title: "", caption: "", hashtags: "" },
+  });
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   // Video playback on demand (saves egress)
   const [playVideo, setPlayVideo] = useState(false);
   const [retryingTargetId, setRetryingTargetId] = useState<number | null>(null);
+  const [uploadingThumb, setUploadingThumb] = useState(false);
+  const thumbInputRef = useRef<HTMLInputElement>(null);
+
+  async function handleThumbnailUpload(file: File) {
+    if (file.type !== "image/jpeg" && file.type !== "image/png") {
+      setSaveStatus({ type: "error", message: "Thumbnail hanya mendukung format JPG atau PNG." });
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setSaveStatus({ type: "error", message: "Ukuran thumbnail melebihi batas 8 MB." });
+      return;
+    }
+
+    setUploadingThumb(true);
+    setSaveStatus(null);
+    try {
+      const initRes = await fetch("/api/v1/uploads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "thumbnail",
+          filename: file.name,
+          size_bytes: file.size,
+          content_type: file.type,
+        }),
+      });
+      if (!initRes.ok) {
+        const err = await initRes.json();
+        throw new Error(err.error?.message || "Gagal menginisialisasi unggahan thumbnail.");
+      }
+      const uploadData = await initRes.json();
+      const uploadUrl =
+        uploadData.upload?.url || uploadData.signed_upload_url || uploadData.signedUrl;
+      if (!uploadUrl) throw new Error("URL unggah thumbnail tidak valid.");
+
+      const putRes = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": file.type },
+        body: file,
+      });
+      if (!putRes.ok) throw new Error("Gagal mentransfer thumbnail ke penyimpanan cloud.");
+
+      const patchRes = await fetch(`/api/v1/posts/${postId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thumbnail_upload_id: uploadData.upload_id }),
+      });
+      if (!patchRes.ok) {
+        const err = await patchRes.json();
+        throw new Error(err.error?.message || "Gagal menyimpan thumbnail ke posting.");
+      }
+
+      setSaveStatus({ type: "success", message: "Thumbnail / Cover berhasil diperbarui!" });
+      await loadPost();
+    } catch (err: any) {
+      setSaveStatus({ type: "error", message: err.message || "Gagal mengunggah thumbnail." });
+    } finally {
+      setUploadingThumb(false);
+      if (thumbInputRef.current) thumbInputRef.current.value = "";
+    }
+  }
+
+  async function handleRemoveThumbnail() {
+    setUploadingThumb(true);
+    setSaveStatus(null);
+    try {
+      const patchRes = await fetch(`/api/v1/posts/${postId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thumbnail_upload_id: null }),
+      });
+      if (!patchRes.ok) {
+        const err = await patchRes.json();
+        throw new Error(err.error?.message || "Gagal menghapus thumbnail.");
+      }
+      setSaveStatus({ type: "success", message: "Thumbnail / Cover dihapus." });
+      await loadPost();
+    } catch (err: any) {
+      setSaveStatus({ type: "error", message: err.message || "Gagal menghapus thumbnail." });
+    } finally {
+      setUploadingThumb(false);
+    }
+  }
 
   async function loadPost() {
     try {
@@ -113,6 +211,21 @@ export default function PostDetailPage() {
       setTitle(data.title ?? "");
       setCaption(data.caption ?? "");
       setHashtags(data.hashtags ?? "");
+
+      const nextOverrides: Record<"youtube" | "instagram" | "tiktok", PlatformOverride> = {
+        youtube: { title: "", caption: "", hashtags: "" },
+        instagram: { title: "", caption: "", hashtags: "" },
+        tiktok: { title: "", caption: "", hashtags: "" },
+      };
+      for (const t of data.targets ?? []) {
+        const es = t.external_state ?? {};
+        nextOverrides[t.platform] = {
+          title: typeof es.override_title === "string" ? es.override_title : "",
+          caption: typeof es.override_caption === "string" ? es.override_caption : "",
+          hashtags: typeof es.override_hashtags === "string" ? es.override_hashtags : "",
+        };
+      }
+      setOverrides(nextOverrides);
     } catch {
       setError("Terjadi kesalahan jaringan.");
     } finally {
@@ -129,6 +242,15 @@ export default function PostDetailPage() {
     setSaving(true);
     setSaveStatus(null);
     try {
+      const platformOverridesPayload: Record<string, PlatformOverride> = {};
+      for (const t of post?.targets ?? []) {
+        platformOverridesPayload[t.platform] = {
+          title: overrides[t.platform].title.trim(),
+          caption: overrides[t.platform].caption.trim(),
+          hashtags: overrides[t.platform].hashtags.trim(),
+        };
+      }
+
       const res = await fetch(`/api/v1/posts/${postId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -136,6 +258,9 @@ export default function PostDetailPage() {
           title: title.trim(),
           caption: caption.trim(),
           hashtags: hashtags.trim(),
+          ...(Object.keys(platformOverridesPayload).length > 0
+            ? { platform_overrides: platformOverridesPayload }
+            : {}),
         }),
       });
 
@@ -386,7 +511,7 @@ export default function PostDetailPage() {
                 <div className="space-y-1.5 max-w-[220px]">
                   <p className="text-xs font-bold text-slate-100">Pratinjau On-Demand</p>
                   <p className="text-[11px] text-slate-400 leading-relaxed">
-                    Video tidak dimuat otomatis demi menghemat kuota download egress Supabase Anda.
+                    Video dimuat hanya saat Anda menekan tombol putar agar halaman tetap ringan.
                   </p>
                 </div>
                 <button
@@ -432,6 +557,78 @@ export default function PostDetailPage() {
               </span>
             </div>
           </div>
+
+          {/* Thumbnail / Cover Section */}
+          <div className="pt-3 border-t border-slate-100 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-slate-900 text-xs flex items-center gap-1.5">
+                <ImageIcon className="w-3.5 h-3.5 text-indigo-600" />
+                Thumbnail / Cover Video
+              </span>
+              <span className="text-[11px] text-slate-400">JPG/PNG (maks. 8 MB)</span>
+            </div>
+            <input
+              ref={thumbInputRef}
+              type="file"
+              accept="image/jpeg,image/png"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handleThumbnailUpload(file);
+              }}
+            />
+
+            {post.thumbnail?.preview_url ? (
+              <div className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-slate-50 border border-slate-200">
+                <div className="flex items-center gap-3 min-w-0">
+                  <img
+                    src={post.thumbnail.preview_url}
+                    alt="Thumbnail Cover"
+                    className="w-10 h-14 object-cover rounded-lg border border-slate-200 shrink-0 bg-slate-900"
+                  />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-slate-800">Cover Terpasang</p>
+                    <p className="text-[10px] font-mono text-slate-400 truncate max-w-[150px]">
+                      {post.thumbnail.object_path}
+                    </p>
+                  </div>
+                </div>
+                {!isCancelled && !allPublished && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      disabled={uploadingThumb}
+                      onClick={() => thumbInputRef.current?.click()}
+                      className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-100 text-[11px] font-medium text-slate-700 transition cursor-pointer disabled:opacity-50"
+                    >
+                      Ganti
+                    </button>
+                    <button
+                      type="button"
+                      disabled={uploadingThumb}
+                      onClick={handleRemoveThumbnail}
+                      className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition cursor-pointer disabled:opacity-50"
+                      title="Hapus cover"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : !isCancelled && !allPublished ? (
+              <button
+                type="button"
+                disabled={uploadingThumb}
+                onClick={() => thumbInputRef.current?.click()}
+                className="w-full py-2.5 px-3 rounded-xl border border-dashed border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/30 text-xs font-medium text-slate-600 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                <ImageIcon className="w-3.5 h-3.5 text-slate-400" />
+                <span>{uploadingThumb ? "Mengunggah cover..." : "Unggah Cover / Thumbnail"}</span>
+              </button>
+            ) : (
+              <p className="text-[11px] text-slate-400 italic">Tidak ada thumbnail khusus.</p>
+            )}
+          </div>
         </div>
 
         {/* Right: Content Information & Metadata Form (7 columns) */}
@@ -445,78 +642,196 @@ export default function PostDetailPage() {
           </div>
 
           <form onSubmit={handleSaveMetadata} className="space-y-4">
-            {/* Title Field */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <Type className="w-3.5 h-3.5 text-slate-400" />
-                  Judul Video (YouTube Shorts & Internal)
-                </label>
-                <span className="text-[11px] font-mono text-slate-400">{title.length} / 100</span>
-              </div>
-              <input
-                type="text"
-                disabled={isCancelled || allPublished}
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                maxLength={100}
-                placeholder="Judul menarik untuk video Anda..."
-                className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-500 transition"
-              />
+            {/* Platform Metadata Tabs */}
+            <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200/60">
+              <button
+                type="button"
+                onClick={() => setActiveMetaTab("default")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                  activeMetaTab === "default"
+                    ? "bg-white text-slate-900 shadow-2xs"
+                    : "text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                Default
+              </button>
+              {post.targets.map((t) => {
+                const ov = overrides[t.platform];
+                const hasCustom = Boolean(ov.title.trim() || ov.caption.trim() || ov.hashtags.trim());
+                const label =
+                  t.platform === "youtube"
+                    ? "YouTube"
+                    : t.platform === "instagram"
+                    ? "Instagram"
+                    : "TikTok";
+                return (
+                  <button
+                    key={t.platform}
+                    type="button"
+                    onClick={() => setActiveMetaTab(t.platform)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer ${
+                      activeMetaTab === t.platform
+                        ? "bg-white text-indigo-700 shadow-2xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    <span>{label}</span>
+                    {hasCustom && <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />}
+                  </button>
+                );
+              })}
             </div>
 
-            {/* Caption Field */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <FileText className="w-3.5 h-3.5 text-slate-400" />
-                  Deskripsi / Caption (Instagram, TikTok, YouTube)
-                </label>
-                <span className="text-[11px] font-mono text-slate-400">{caption.length} / 2200</span>
-              </div>
-              <textarea
-                disabled={isCancelled || allPublished}
-                value={caption}
-                onChange={(e) => setCaption(e.target.value)}
-                maxLength={2200}
-                rows={5}
-                placeholder="Tulis deskripsi konten Anda di sini..."
-                className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-500 transition resize-none leading-relaxed"
-              />
-            </div>
-
-            {/* Hashtags Field */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                  <Hash className="w-3.5 h-3.5 text-slate-400" />
-                  Hashtag Tambahan
-                </label>
-                <span className="text-[11px] text-slate-400">Pisahkan dengan spasi</span>
-              </div>
-              <input
-                type="text"
-                disabled={isCancelled || allPublished}
-                value={hashtags}
-                onChange={(e) => setHashtags(e.target.value)}
-                placeholder="#shorts #reels #fyp"
-                className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-500 transition font-mono"
-              />
-
-              {/* Hashtag chips preview */}
-              {hashtagList.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 pt-2">
-                  {hashtagList.map((tag, idx) => (
-                    <span
-                      key={idx}
-                      className="inline-flex items-center px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-mono text-[11px] font-medium border border-indigo-100"
-                    >
-                      {tag.startsWith("#") ? tag : `#${tag}`}
-                    </span>
-                  ))}
+            {activeMetaTab === "default" ? (
+              <>
+                {/* Title Field */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <Type className="w-3.5 h-3.5 text-slate-400" />
+                      Judul Default (YouTube Shorts &amp; Internal)
+                    </label>
+                    <span className="text-[11px] font-mono text-slate-400">{title.length} / 100</span>
+                  </div>
+                  <input
+                    type="text"
+                    disabled={isCancelled || allPublished}
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    maxLength={100}
+                    placeholder="Judul menarik untuk video Anda..."
+                    className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-500 transition"
+                  />
                 </div>
-              )}
-            </div>
+
+                {/* Caption Field */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-slate-400" />
+                      Caption Default
+                    </label>
+                    <span className="text-[11px] font-mono text-slate-400">{caption.length} / 2200</span>
+                  </div>
+                  <textarea
+                    disabled={isCancelled || allPublished}
+                    value={caption}
+                    onChange={(e) => setCaption(e.target.value)}
+                    maxLength={2200}
+                    rows={5}
+                    placeholder="Tulis deskripsi konten Anda di sini..."
+                    className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-500 transition resize-none leading-relaxed"
+                  />
+                </div>
+
+                {/* Hashtags Field */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <Hash className="w-3.5 h-3.5 text-slate-400" />
+                      Hashtag Default
+                    </label>
+                    <span className="text-[11px] text-slate-400">Pisahkan dengan spasi</span>
+                  </div>
+                  <input
+                    type="text"
+                    disabled={isCancelled || allPublished}
+                    value={hashtags}
+                    onChange={(e) => setHashtags(e.target.value)}
+                    placeholder="#shorts #reels #fyp"
+                    className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 disabled:bg-slate-50 disabled:text-slate-500 transition font-mono"
+                  />
+
+                  {/* Hashtag chips preview */}
+                  {hashtagList.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 pt-2">
+                      {hashtagList.map((tag, idx) => (
+                        <span
+                          key={idx}
+                          className="inline-flex items-center px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-mono text-[11px] font-medium border border-indigo-100"
+                        >
+                          {tag.startsWith("#") ? tag : `#${tag}`}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              (() => {
+                const plat = activeMetaTab;
+                const ov = overrides[plat];
+                const platLabel =
+                  plat === "youtube" ? "YouTube" : plat === "instagram" ? "Instagram" : "TikTok";
+                const updateOv = (field: keyof PlatformOverride, val: string) =>
+                  setOverrides((prev) => ({
+                    ...prev,
+                    [plat]: { ...prev[plat], [field]: val },
+                  }));
+
+                return (
+                  <div className="space-y-4 p-3.5 rounded-xl border border-indigo-100 bg-indigo-50/20">
+                    <p className="text-[11px] text-slate-500">
+                      Teks khusus untuk <strong>{platLabel}</strong>. Kosongkan field agar otomatis mengikuti tab Default.
+                    </p>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-700">
+                          Judul Khusus {platLabel}
+                        </label>
+                        <span className="text-[11px] font-mono text-slate-400">
+                          {ov.title.length} / 100
+                        </span>
+                      </div>
+                      <input
+                        type="text"
+                        disabled={isCancelled || allPublished}
+                        value={ov.title}
+                        onChange={(e) => updateOv("title", e.target.value)}
+                        maxLength={100}
+                        placeholder={title || "Mengikuti Judul Default"}
+                        className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-50 transition"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold text-slate-700">
+                          Caption Khusus {platLabel}
+                        </label>
+                        <span className="text-[11px] font-mono text-slate-400">
+                          {ov.caption.length} / 2200
+                        </span>
+                      </div>
+                      <textarea
+                        disabled={isCancelled || allPublished}
+                        value={ov.caption}
+                        onChange={(e) => updateOv("caption", e.target.value)}
+                        maxLength={2200}
+                        rows={4}
+                        placeholder={caption || "Mengikuti Caption Default"}
+                        className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-50 transition resize-none leading-relaxed"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-bold text-slate-700 block">
+                        Hashtag Khusus {platLabel}
+                      </label>
+                      <input
+                        type="text"
+                        disabled={isCancelled || allPublished}
+                        value={ov.hashtags}
+                        onChange={(e) => updateOv("hashtags", e.target.value)}
+                        placeholder={hashtags || "Mengikuti Hashtag Default"}
+                        className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-50 transition font-mono"
+                      />
+                    </div>
+                  </div>
+                );
+              })()
+            )}
 
             {/* Submit Button */}
             {!isCancelled && !allPublished && (
@@ -556,7 +871,11 @@ export default function PostDetailPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {post.targets.map((target) => {
-            const isFailed = target.status === "failed" || target.status === "missed";
+            const isFailed =
+              target.status === "failed" ||
+              target.status === "missed" ||
+              target.hold_reason !== null ||
+              target.last_error_code !== null;
             const isPublished = target.status === "published";
             const isUploading = target.status === "uploading";
             const isAwaiting = target.status === "awaiting_platform";
@@ -672,8 +991,8 @@ export default function PostDetailPage() {
                   )}
                 </div>
 
-                {/* Retry Button for Failed Targets */}
-                {isFailed && (
+                {/* Retry Button for Failed or Held Targets */}
+                {isFailed && !isPublished && (
                   <button
                     type="button"
                     disabled={isRetrying}

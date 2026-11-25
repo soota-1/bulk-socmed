@@ -13,11 +13,21 @@ describe("UploadRequestSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects video over 50 MB", () => {
+  it("accepts large video up to 1 GB (e.g. 250 MB)", () => {
+    const result = UploadRequestSchema.safeParse({
+      kind: "video",
+      filename: "hd_reel.mp4",
+      size_bytes: 250 * 1024 * 1024, // 250 MB
+      content_type: "video/mp4",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects video over 1 GB", () => {
     const result = UploadRequestSchema.safeParse({
       kind: "video",
       filename: "big.mp4",
-      size_bytes: 51 * 1024 * 1024, // 51 MB
+      size_bytes: 1025 * 1024 * 1024, // 1025 MB
       content_type: "video/mp4",
     });
     expect(result.success).toBe(false);
@@ -80,5 +90,21 @@ describe("PostCreateSchema — caption & title validation", () => {
   it("accepts title exactly 100 characters", () => {
     const result = PostCreateSchema.safeParse({ ...base, title: "a".repeat(100) });
     expect(result.success).toBe(true);
+  });
+
+  it("accepts selected platforms and per-platform overrides", () => {
+    const result = PostCreateSchema.safeParse({
+      ...base,
+      platforms: ["youtube", "instagram"],
+      platform_overrides: {
+        youtube: { title: "Judul YT", caption: "Caption YT", hashtags: "#shorts" },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects empty platforms array", () => {
+    const result = PostCreateSchema.safeParse({ ...base, platforms: [] });
+    expect(result.success).toBe(false);
   });
 });

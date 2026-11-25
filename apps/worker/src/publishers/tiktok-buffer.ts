@@ -1,6 +1,11 @@
 import { addHours, differenceInSeconds, subDays } from "date-fns";
 import type { PlannedTarget } from "@bulk-socmed/shared";
 import {
+  createR2SignedDownloadUrl,
+  headR2Object,
+  isR2Configured,
+} from "@bulk-socmed/shared/r2";
+import {
   type Publisher,
   type StepContext,
   type StepResult,
@@ -71,21 +76,31 @@ export class TikTokBufferPublisher implements Publisher {
         const expiryTime = addHours(dueAt, 6);
         const expiresInSeconds = Math.max(differenceInSeconds(expiryTime, now), 6 * 3600);
 
-        const { data, error } = await supabase.storage
-          .from("videos")
-          .createSignedUrl(post.video_object_path, expiresInSeconds);
+        let signedUrl: string | undefined;
+        if (isR2Configured() && (await headR2Object("videos", post.video_object_path))) {
+          signedUrl = await createR2SignedDownloadUrl({
+            folder: "videos",
+            objectPath: post.video_object_path,
+            expiresInSeconds,
+          });
+        } else {
+          const { data, error } = await supabase.storage
+            .from("videos")
+            .createSignedUrl(post.video_object_path, expiresInSeconds);
 
-        if (error || !data?.signedUrl) {
-          return createStepError(
-            "storage_sign_error",
-            `Gagal membuat signed URL untuk Buffer: ${error?.message}`
-          );
+          if (error || !data?.signedUrl) {
+            return createStepError(
+              "storage_sign_error",
+              `Gagal membuat signed URL untuk Buffer: ${error?.message}`
+            );
+          }
+          signedUrl = data.signedUrl;
         }
 
         return createStepSuccess("uploading", "create_post", {
           externalState: {
             ...target.external_state,
-            signed_url: data.signedUrl,
+            signed_url: signedUrl,
           },
         });
       } catch (err) {

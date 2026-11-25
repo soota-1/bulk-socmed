@@ -1,3 +1,4 @@
+import { getR2Config } from "@bulk-socmed/shared/r2";
 import { loadConfig } from "./config";
 import { createWorkerSupabaseClient } from "./supabase";
 import { Daemon } from "./daemon";
@@ -7,8 +8,12 @@ async function main() {
   let config;
   try {
     config = loadConfig();
+    const r2 = getR2Config();
     console.log(`[Config] Worker ID: ${config.workerId}, Host: ${config.hostName}`);
     console.log(`[Config] Supabase: ${config.supabaseUrl}`);
+    console.log(
+      `[Config] Storage: ${r2 ? `Cloudflare R2 (bucket: ${r2.bucketName})` : "Supabase Storage (fallback)"}`
+    );
   } catch (err) {
     console.error(`[Fatal] Failed to load configuration: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);

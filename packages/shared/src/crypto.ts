@@ -33,6 +33,42 @@ export function encryptToken(plainText: string, key: Buffer): Buffer {
   return Buffer.concat([iv, authTag, encrypted]);
 }
 
+export function parseByteaPayload(val: any): Buffer {
+  if (!val) {
+    throw new Error("Empty payload to parseByteaPayload");
+  }
+
+  let buf: Buffer;
+  if (Buffer.isBuffer(val)) {
+    buf = val;
+  } else if (typeof val === "string") {
+    if (val.startsWith("\\x")) {
+      buf = Buffer.from(val.slice(2), "hex");
+    } else {
+      buf = Buffer.from(val, "hex");
+    }
+  } else if (val && typeof val === "object" && val.type === "Buffer" && Array.isArray(val.data)) {
+    return Buffer.from(val.data);
+  } else {
+    buf = Buffer.from(val);
+  }
+
+  // Check if PostgreSQL stored a JSON-serialized Node.js Buffer: {"type":"Buffer","data":[...]}
+  try {
+    const asUtf8 = buf.toString("utf8");
+    if (asUtf8.startsWith('{"type":"Buffer"') && asUtf8.endsWith("}")) {
+      const parsed = JSON.parse(asUtf8);
+      if (parsed.type === "Buffer" && Array.isArray(parsed.data)) {
+        return Buffer.from(parsed.data);
+      }
+    }
+  } catch {
+    // Not JSON serialized, use buf directly
+  }
+
+  return buf;
+}
+
 /**
  * Decrypt a packed AES-256-GCM Buffer back to plaintext string.
  * Expects: [12-byte IV] + [16-byte Auth Tag] + [Ciphertext]

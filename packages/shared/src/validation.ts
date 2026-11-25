@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   MAX_TITLE_LENGTH,
   MAX_VIDEO_SIZE_BYTES,
+  MAX_VIDEO_SIZE_MB,
   MAX_THUMBNAIL_SIZE_BYTES,
   SUPPORTED_VIDEO_TYPES,
   SUPPORTED_THUMBNAIL_TYPES,
@@ -28,7 +29,7 @@ export const UploadRequestSchema = z.discriminatedUnion("kind", [
       .int()
       .positive()
       .max(MAX_VIDEO_SIZE_BYTES, {
-        message: `size_bytes must not exceed ${MAX_VIDEO_SIZE_BYTES} bytes (50 MB)`,
+        message: `size_bytes must not exceed ${MAX_VIDEO_SIZE_BYTES} bytes (${MAX_VIDEO_SIZE_MB} MB)`,
       }),
     content_type: z.enum(SUPPORTED_VIDEO_TYPES),
     metadata: VideoMetadataSchema,
@@ -64,12 +65,31 @@ const ScheduleSchema = z.discriminatedUnion("type", [
 // Post create schema (used by POST /api/v1/posts)
 // ---------------------------------------------------------------------------
 
+export const PlatformEnum = z.enum(["youtube", "instagram", "tiktok"]);
+
+export const PlatformOverrideSchema = z.object({
+  title: z.string().max(MAX_TITLE_LENGTH).optional(),
+  caption: z.string().optional(),
+  hashtags: z.string().optional(),
+});
+
+export const PlatformOverridesMapSchema = z.object({
+  youtube: PlatformOverrideSchema.optional(),
+  instagram: PlatformOverrideSchema.optional(),
+  tiktok: PlatformOverrideSchema.optional(),
+});
+
 export const PostCreateSchema = z.object({
   video_upload_id: z.string().uuid(),
   thumbnail_upload_id: z.string().uuid().optional(),
   title: z.string().max(MAX_TITLE_LENGTH).optional(),
   caption: z.string().min(1, { message: "Caption tidak boleh kosong" }),
   hashtags: z.string().optional(),
+  platforms: z
+    .array(PlatformEnum)
+    .min(1, { message: "Pilih minimal satu platform tujuan" })
+    .optional(),
+  platform_overrides: PlatformOverridesMapSchema.optional(),
   schedule: ScheduleSchema.optional(),
   mode: z.enum(["schedule", "draft"]).optional().default("schedule"),
 });
@@ -85,6 +105,7 @@ export const PostUpdateSchema = z
     title: z.string().max(MAX_TITLE_LENGTH).optional(),
     caption: z.string().min(1).optional(),
     hashtags: z.string().optional(),
+    platform_overrides: PlatformOverridesMapSchema.optional(),
     thumbnail_upload_id: z.string().uuid().nullable().optional(),
     schedule: ScheduleSchema.optional(),
   })

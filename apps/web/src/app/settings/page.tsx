@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 
 interface UsageData {
+  storage_provider?: "r2" | "supabase";
+  egress_unlimited?: boolean;
   storage: {
     used_bytes_estimate: number;
     quota_bytes: number;
@@ -119,7 +121,7 @@ export default function SettingsPage() {
       <div className="pb-2 border-b border-slate-200/60">
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Pengaturan Sistem</h1>
         <p className="text-xs sm:text-sm text-slate-500 mt-1">
-          Konfigurasi toleransi jadwal posting, antrean platform, dan pantau kuota gratis Supabase.
+          Konfigurasi toleransi jadwal posting, antrean platform, dan pantau kuota penyimpanan media.
         </p>
       </div>
 
@@ -142,9 +144,24 @@ export default function SettingsPage() {
 
       {/* Storage & Egress Meters */}
       <div className="bg-white rounded-2xl border border-slate-200/80 p-6 shadow-xs space-y-5">
-        <div className="flex items-center gap-2.5 pb-3 border-b border-slate-100">
-          <Database className="w-5 h-5 text-indigo-600" />
-          <h3 className="font-bold text-slate-900 text-sm">Estimasi Kuota Free-Tier Supabase</h3>
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2.5">
+            <Database className="w-5 h-5 text-indigo-600" />
+            <h3 className="font-bold text-slate-900 text-sm">
+              {usage?.storage_provider === "r2"
+                ? "Estimasi Kuota Cloudflare R2 (Free Tier)"
+                : "Estimasi Kuota Free-Tier Supabase"}
+            </h3>
+          </div>
+          <span
+            className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${
+              usage?.storage_provider === "r2"
+                ? "bg-orange-50 text-orange-700 border-orange-200"
+                : "bg-slate-100 text-slate-600 border-slate-200"
+            }`}
+          >
+            {usage?.storage_provider === "r2" ? "Cloudflare R2 Aktif" : "Supabase Storage"}
+          </span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -156,7 +173,11 @@ export default function SettingsPage() {
                 Penyimpanan Media
               </span>
               <span className="font-mono text-slate-600 font-medium">
-                {((usage?.storage?.used_bytes_estimate ?? 0) / (1024 * 1024)).toFixed(1)} MB / 1.024 MB
+                {((usage?.storage?.used_bytes_estimate ?? 0) / (1024 * 1024)).toFixed(1)} MB /{" "}
+                {((usage?.storage?.quota_bytes ?? 1024 * 1024 * 1024) / (1024 * 1024)).toLocaleString(
+                  "id-ID"
+                )}{" "}
+                MB
               </span>
             </div>
             <div className="w-full bg-slate-200/80 rounded-full h-2.5 overflow-hidden">
@@ -168,7 +189,9 @@ export default function SettingsPage() {
               ></div>
             </div>
             <p className="text-[11px] text-slate-500">
-              Kapasitas: 1 GB. Berkas video dibersihkan otomatis 3 hari setelah terbit.
+              {usage?.storage_provider === "r2"
+                ? "Kapasitas gratis: 10 GB/bulan (maks 1 GB/video). Berkas dibersihkan otomatis 3 hari setelah terbit."
+                : "Kapasitas: 1 GB. Berkas video dibersihkan otomatis 3 hari setelah terbit."}
             </p>
           </div>
 
@@ -180,19 +203,31 @@ export default function SettingsPage() {
                 Bandwidth Unduhan (Egress)
               </span>
               <span className="font-mono text-slate-600 font-medium">
-                {((usage?.egress_month?.used_bytes_estimate ?? 0) / (1024 * 1024)).toFixed(1)} MB / 5.120 MB
+                {usage?.egress_unlimited
+                  ? "Gratis Tanpa Batas ($0)"
+                  : `${((usage?.egress_month?.used_bytes_estimate ?? 0) / (1024 * 1024)).toFixed(1)} MB / 5.120 MB`}
               </span>
             </div>
             <div className="w-full bg-slate-200/80 rounded-full h-2.5 overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all ${
-                  (usage?.egress_month?.percent ?? 0) >= 80 ? "bg-amber-500" : "bg-emerald-500"
+                  usage?.egress_unlimited
+                    ? "bg-emerald-500"
+                    : (usage?.egress_month?.percent ?? 0) >= 80
+                    ? "bg-amber-500"
+                    : "bg-emerald-500"
                 }`}
-                style={{ width: `${Math.min(100, usage?.egress_month?.percent ?? 0)}%` }}
+                style={{
+                  width: usage?.egress_unlimited
+                    ? "100%"
+                    : `${Math.min(100, usage?.egress_month?.percent ?? 0)}%`,
+                }}
               ></div>
             </div>
             <p className="text-[11px] text-slate-500">
-              Batas gratis: 5 GB/bulan. Dihemat dengan cache lokal pekerja dan pemutaran on-demand.
+              {usage?.egress_unlimited
+                ? "Cloudflare R2 tidak mengenakan biaya egress (Zero Egress Fee)."
+                : "Batas gratis: 5 GB/bulan. Dihemat dengan cache lokal pekerja dan pemutaran on-demand."}
             </p>
           </div>
         </div>

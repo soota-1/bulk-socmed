@@ -20,22 +20,27 @@ export async function POST(
   }
 
   const platform = params.platform.toLowerCase();
-  if (platform !== "youtube" && platform !== "instagram") {
+  if (platform !== "youtube" && platform !== "instagram" && platform !== "tiktok") {
     return NextResponse.json(
       {
         error: {
           code: "invalid_platform",
-          message: `Platform '${platform}' tidak mendukung OAuth authorize. Hanya 'youtube' atau 'instagram'.`,
+          message: `Platform '${platform}' tidak mendukung OAuth authorize. Hanya 'youtube', 'instagram', atau 'tiktok'.`,
         },
       },
       { status: 400 }
     );
   }
 
+  const origin = request.nextUrl.origin || request.headers.get("origin") || "http://localhost:3000";
+  const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL;
   const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL ||
-    request.headers.get("origin") ||
-    "http://localhost:3000";
+    configuredAppUrl &&
+    !configuredAppUrl.includes("<") &&
+    !configuredAppUrl.includes("nama-app") &&
+    !configuredAppUrl.includes("your-app")
+      ? configuredAppUrl
+      : origin;
 
   const redirectUri = `${appUrl}/api/oauth/${platform}/callback`;
   const state = crypto.randomBytes(24).toString("hex");
@@ -82,6 +87,29 @@ export async function POST(
       state,
     });
     authorizeUrl = `https://www.facebook.com/v19.0/dialog/oauth?${query.toString()}`;
+  } else if (platform === "tiktok") {
+    const clientKey = process.env.TIKTOK_CLIENT_KEY || process.env.TIKTOK_CLIENT_ID || "";
+    if (!clientKey) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "missing_tiktok_client_key",
+            message: "TIKTOK_CLIENT_KEY belum diisi di berkas .env. Daftarkan aplikasi di developers.tiktok.com terlebih dahulu.",
+          },
+        },
+        { status: 400 }
+      );
+    }
+    const scopes = "user.info.basic,video.publish,video.upload";
+
+    const query = new URLSearchParams({
+      client_key: clientKey,
+      scope: scopes,
+      response_type: "code",
+      redirect_uri: redirectUri,
+      state,
+    });
+    authorizeUrl = `https://www.tiktok.com/v2/auth/authorize/?${query.toString()}`;
   }
 
   return NextResponse.json({

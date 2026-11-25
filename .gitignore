@@ -10,12 +10,19 @@ build/
 *.tsbuildinfo
 
 # Worker runtime data (laptop-local only)
-data/cache/
-data/logs/
-data/backups/
+data/
+**/data/
+apps/worker/data/
+
+# Vercel deployment
+.vercel/
 
 # Environment secrets
 .env
+.env.*
+!.env.example
+*.env
+*.env.local
 .env.local
 .env.*.local
 

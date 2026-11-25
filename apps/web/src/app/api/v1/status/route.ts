@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { differenceInSeconds } from "date-fns";
+import { isR2Configured } from "@bulk-socmed/shared/r2";
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET() {
@@ -65,11 +66,23 @@ export async function GET() {
     });
   }
 
-  // Check storage warnings (80% of 1GB and 5GB)
-  const STORAGE_QUOTA = 1024 * 1024 * 1024; // 1 GB
-  const EGRESS_QUOTA = 5 * 1024 * 1024 * 1024; // 5 GB
+  const r2Active = isR2Configured();
 
-  if (egressUsedMonth / EGRESS_QUOTA >= 0.8) {
+  // Check storage & egress quotas (Cloudflare R2: 10 GB storage, unlimited egress; Supabase Free: 1 GB / 5 GB)
+  const STORAGE_QUOTA = r2Active ? 10 * 1024 * 1024 * 1024 : 1024 * 1024 * 1024;
+  const EGRESS_QUOTA = 5 * 1024 * 1024 * 1024; // 5 GB (relevant for Supabase only)
+
+  if (storageUsed / STORAGE_QUOTA >= 0.8) {
+    alerts.push({
+      id: "storage_high",
+      severity: "warning",
+      code: "storage_usage_high",
+      message: `Penyimpanan media mencapai ${((storageUsed / STORAGE_QUOTA) * 100).toFixed(0)}% dari kuota gratis ${r2Active ? "10 GB (Cloudflare R2)" : "1 GB (Supabase)"}.`,
+      action: { label: "Lihat penyimpanan", href: "/settings" },
+    });
+  }
+
+  if (!r2Active && egressUsedMonth / EGRESS_QUOTA >= 0.8) {
     alerts.push({
       id: "egress_high",
       severity: "warning",
@@ -91,6 +104,8 @@ export async function GET() {
       healthy: workerHealthy,
     },
     usage: {
+      storage_provider: r2Active ? "r2" : "supabase",
+      egress_unlimited: r2Active,
       storage: {
         used_bytes_estimate: storageUsed,
         quota_bytes: STORAGE_QUOTA,
@@ -98,8 +113,8 @@ export async function GET() {
       },
       egress_month: {
         used_bytes_estimate: egressUsedMonth,
-        quota_bytes: EGRESS_QUOTA,
-        percent: Math.min(100, Math.round((egressUsedMonth / EGRESS_QUOTA) * 100)),
+        quota_bytes: r2Active ? 0 : EGRESS_QUOTA,
+        percent: r2Active ? 0 : Math.min(100, Math.round((egressUsedMonth / EGRESS_QUOTA) * 100)),
       },
     },
     alerts,

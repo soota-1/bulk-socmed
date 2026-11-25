@@ -1,6 +1,35 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { PostUpdateSchema } from "@bulk-socmed/shared";
-import { createClient } from "@/lib/supabase/server";
+import {
+  createR2SignedDownloadUrl,
+  headR2Object,
+  isR2Configured,
+  type MediaFolder,
+} from "@bulk-socmed/shared/r2";
+import { createClient, createAdminClient } from "@/lib/supabase/server";
+
+async function resolveSignedPreviewUrl(
+  supabase: ReturnType<typeof createClient>,
+  folder: MediaFolder,
+  objectPath: string,
+  expiresInSeconds = 600
+): Promise<string | null> {
+  if (isR2Configured()) {
+    try {
+      const existsInR2 = await headR2Object(folder, objectPath);
+      if (existsInR2) {
+        return await createR2SignedDownloadUrl({ folder, objectPath, expiresInSeconds });
+      }
+    } catch {
+      // Fallback to Supabase Storage below
+    }
+  }
+
+  const { data: signed } = await supabase.storage
+    .from(folder)
+    .createSignedUrl(objectPath, expiresInSeconds);
+  return signed?.signedUrl ?? null;
+}
 
 export async function GET(
   _request: NextRequest,
@@ -60,23 +89,15 @@ export async function GET(
     events = eventRows ?? [];
   }
 
-  // 4. Generate 10-minute signed preview URL for video
-  let videoPreviewUrl: string | null = null;
-  if (post.video_object_path) {
-    const { data: signed } = await supabase.storage
-      .from("videos")
-      .createSignedUrl(post.video_object_path, 600); // 10 minutes
-    videoPreviewUrl = signed?.signedUrl ?? null;
-  }
+  // 4. Generate 10-minute signed preview URL for video (R2 or Supabase fallback)
+  const videoPreviewUrl = post.video_object_path
+    ? await resolveSignedPreviewUrl(supabase, "videos", post.video_object_path, 600)
+    : null;
 
   // 5. Generate signed preview URL for thumbnail if present
-  let thumbPreviewUrl: string | null = null;
-  if (post.thumbnail_object_path) {
-    const { data: signedThumb } = await supabase.storage
-      .from("thumbnails")
-      .createSignedUrl(post.thumbnail_object_path, 600);
-    thumbPreviewUrl = signedThumb?.signedUrl ?? null;
-  }
+  const thumbPreviewUrl = post.thumbnail_object_path
+    ? await resolveSignedPreviewUrl(supabase, "thumbnails", post.thumbnail_object_path, 600)
+    : null;
 
   return NextResponse.json({
     id: post.id,
@@ -167,7 +188,7 @@ export async function PATCH(
     );
   }
 
-  const { title, caption, hashtags } = parsed.data;
+  const { title, caption, hashtags, platform_overrides, thumbnail_upload_id } = parsed.data;
   const updateData: Record<string, unknown> = {
     updated_at: new Date().toISOString(),
   };
@@ -176,11 +197,39 @@ export async function PATCH(
   if (caption !== undefined) updateData.caption = caption;
   if (hashtags !== undefined) updateData.hashtags = hashtags;
 
+  const adminSupabase = createAdminClient();
+
+  if (thumbnail_upload_id === null) {
+    updateData.thumbnail_object_path = null;
+  } else if (typeof thumbnail_upload_id === "string") {
+    const { data: thumbUpload, error: thumbErr } = await adminSupabase
+      .from("uploads")
+      .select("object_path")
+      .eq("id", thumbnail_upload_id)
+      .eq("owner_id", user.id)
+      .eq("kind", "thumbnail")
+      .single();
+
+    if (thumbErr || !thumbUpload) {
+      return NextResponse.json(
+        { error: { code: "upload_not_found", message: "Berkas thumbnail tidak ditemukan." } },
+        { status: 404 }
+      );
+    }
+
+    updateData.thumbnail_object_path = thumbUpload.object_path;
+    await adminSupabase
+      .from("uploads")
+      .update({ state: "consumed", consumed_post_id: postId })
+      .eq("id", thumbnail_upload_id);
+  }
+
   // Update posts row
-  const { data: updatedPost, error: updateErr } = await supabase
+  const { data: updatedPost, error: updateErr } = await adminSupabase
     .from("posts")
     .update(updateData)
     .eq("id", postId)
+    .eq("owner_id", user.id)
     .select("*")
     .single();
 
@@ -191,14 +240,52 @@ export async function PATCH(
     );
   }
 
+  // Persist per-platform overrides if provided
+  if (platform_overrides) {
+    const { data: currentTargets } = await adminSupabase
+      .from("targets")
+      .select("id, platform, external_state")
+      .eq("post_id", postId)
+      .eq("owner_id", user.id);
+
+    for (const target of currentTargets ?? []) {
+      const plat = target.platform as "youtube" | "instagram" | "tiktok";
+      const ov = platform_overrides[plat];
+      if (!ov) continue;
+
+      const nextState: Record<string, unknown> = {
+        ...((target.external_state as Record<string, unknown>) ?? {}),
+      };
+
+      if (ov.title !== undefined) {
+        if (ov.title.trim()) nextState.override_title = ov.title.trim();
+        else delete nextState.override_title;
+      }
+      if (ov.caption !== undefined) {
+        if (ov.caption.trim()) nextState.override_caption = ov.caption.trim();
+        else delete nextState.override_caption;
+      }
+      if (ov.hashtags !== undefined) {
+        if (ov.hashtags.trim()) nextState.override_hashtags = ov.hashtags.trim();
+        else delete nextState.override_hashtags;
+      }
+
+      await adminSupabase
+        .from("targets")
+        .update({ external_state: nextState, updated_at: new Date().toISOString() })
+        .eq("id", target.id);
+    }
+  }
+
   // Flag pending_action = "sync_changes" on targets already uploaded or awaiting platform
-  await supabase
+  await adminSupabase
     .from("targets")
     .update({
       pending_action: "sync_changes",
       updated_at: new Date().toISOString(),
     })
     .eq("post_id", postId)
+    .eq("owner_id", user.id)
     .in("status", ["uploading", "awaiting_platform"]);
 
   return NextResponse.json(updatedPost);
@@ -237,30 +324,33 @@ export async function DELETE(
   }
 
   const now = new Date().toISOString();
+  const adminSupabase = createAdminClient();
 
   // 2. Set post state = "cancelled" and free the slot_key
-  await supabase
+  await adminSupabase
     .from("posts")
     .update({
       state: "cancelled",
       slot_key: null, // Frees the slot immediately
       updated_at: now,
     })
-    .eq("id", postId);
+    .eq("id", postId)
+    .eq("owner_id", user.id);
 
   // 3. Update targets:
   // For targets already on platform, flag pending_action = "cancel" for worker deletion
-  await supabase
+  await adminSupabase
     .from("targets")
     .update({
       pending_action: "cancel",
       updated_at: now,
     })
     .eq("post_id", postId)
+    .eq("owner_id", user.id)
     .in("status", ["uploading", "awaiting_platform"]);
 
   // For targets still scheduled/draft, mark cancelled immediately
-  await supabase
+  await adminSupabase
     .from("targets")
     .update({
       status: "cancelled",
@@ -268,6 +358,7 @@ export async function DELETE(
       updated_at: now,
     })
     .eq("post_id", postId)
+    .eq("owner_id", user.id)
     .in("status", ["scheduled", "draft"]);
 
   return NextResponse.json({ message: "Posting berhasil dibatalkan.", id: postId });

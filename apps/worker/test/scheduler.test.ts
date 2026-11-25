@@ -127,6 +127,43 @@ describe("scheduler — executeTargetStep integration", () => {
     );
   });
 
+  it("applies per-platform overrides from target.external_state when executing step", async () => {
+    const supabase = createMockSupabase();
+    const mockPublisher: Publisher = {
+      platform: "youtube",
+      plan: vi.fn(),
+      advance: vi.fn().mockResolvedValueOnce({
+        nextStatus: "uploading",
+        nextStep: "wait_processing",
+      } as StepResult),
+      reconcile: vi.fn(),
+      applyChanges: vi.fn(),
+      cancel: vi.fn(),
+    };
+
+    const overriddenTarget: ClaimedTarget = {
+      ...baseTarget,
+      external_state: {
+        override_title: "Judul Khusus YouTube",
+        override_caption: "Caption Khusus YouTube",
+        override_hashtags: "#shorts #gaming",
+      },
+    };
+
+    const media = { videoFilePath: "C:/cache/15/video.mp4" };
+    await executeTargetStep(supabase, overriddenTarget, basePost, media, mockPublisher, now, "token_123");
+
+    expect(mockPublisher.advance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        post: expect.objectContaining({
+          title: "Judul Khusus YouTube",
+          caption: "Caption Khusus YouTube",
+          hashtags: "#shorts #gaming",
+        }),
+      })
+    );
+  });
+
   it("handles permanent error: updates status to failed", async () => {
     const supabase = createMockSupabase();
 

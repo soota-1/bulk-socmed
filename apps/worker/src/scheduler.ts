@@ -4,7 +4,7 @@ import { DEFAULT_GRACE_MINUTES, type Platform, type TargetStatus } from "@bulk-s
 import type { WorkerConfig } from "./config";
 import { sendHeartbeat } from "./heartbeat";
 import { ensureMediaCache, type CachedMedia } from "./media-cache";
-import { decryptToken } from "./crypto";
+import { decryptToken, encryptToken, parseByteaPayload } from "./crypto";
 import type {
   Publisher,
   StepContext,
@@ -93,7 +93,8 @@ export async function executeTargetStep(
   media: CachedMedia,
   publisher: Publisher,
   now: Date,
-  tokenOrApiKey?: string
+  tokenOrApiKey?: string,
+  connectionExternalAccountId?: string
 ): Promise<void> {
   const stepTarget: StepTarget = {
     id: target.id,
@@ -107,11 +108,25 @@ export async function executeTargetStep(
     idempotency_key: target.idempotency_key,
   };
 
+  const extState = (target.external_state ?? {}) as Record<string, unknown>;
+  const overrideTitle =
+    typeof extState.override_title === "string" && extState.override_title.trim().length > 0
+      ? extState.override_title.trim()
+      : post.title;
+  const overrideCaption =
+    typeof extState.override_caption === "string" && extState.override_caption.trim().length > 0
+      ? extState.override_caption.trim()
+      : post.caption;
+  const overrideHashtags =
+    typeof extState.override_hashtags === "string"
+      ? extState.override_hashtags
+      : post.hashtags ?? "";
+
   const stepPost: StepPost = {
     id: post.id,
-    title: post.title,
-    caption: post.caption,
-    hashtags: post.hashtags ?? "",
+    title: overrideTitle,
+    caption: overrideCaption,
+    hashtags: overrideHashtags,
     video_object_path: post.video_object_path,
     thumbnail_object_path: post.thumbnail_object_path ?? null,
     due_at: post.due_at,
@@ -125,7 +140,8 @@ export async function executeTargetStep(
     apiKey: tokenOrApiKey,
     externalAccountId: (target.external_state?.channel_id ??
       target.external_state?.account_id ??
-      target.external_state?.profile_id) as string | undefined,
+      target.external_state?.profile_id ??
+      connectionExternalAccountId) as string | undefined,
     media,
     supabase,
   };
@@ -414,12 +430,7 @@ export async function processConnectionTests(
     }
 
     try {
-      const buf =
-        typeof enc === "string"
-          ? enc.startsWith("\\x")
-            ? Buffer.from(enc.slice(2), "hex")
-            : Buffer.from(enc, "base64")
-          : Buffer.from(enc);
+      const buf = parseByteaPayload(enc);
       const tokenOrKey = decryptToken(buf, config.tokenEncKey);
 
       let ok = true;
@@ -572,32 +583,152 @@ export async function runSchedulerCycle(
 
       // Resolve token/key if available
       let tokenOrApiKey: string | undefined;
+      let connectionExternalAccountId: string | undefined;
       try {
         const { data: conn } = await supabase
           .from("connections")
-          .select("id, external_account_id, connection_secrets(access_token_enc, api_key_enc)")
+          .select("id, status, external_account_id, details, token_expires_at, connection_secrets(access_token_enc, refresh_token_enc, api_key_enc)")
           .eq("owner_id", target.owner_id)
           .eq("platform", target.platform)
           .maybeSingle();
 
-        if (conn && conn.connection_secrets) {
-          const secrets = Array.isArray(conn.connection_secrets)
-            ? conn.connection_secrets[0]
-            : (conn.connection_secrets as any);
+        if (conn && conn.status !== "disabled") {
+          connectionExternalAccountId =
+            conn.external_account_id ??
+            (conn.details as any)?.buffer_channel_id ??
+            undefined;
 
-          const enc = secrets?.access_token_enc ?? secrets?.api_key_enc;
-          if (enc) {
-            const buf =
-              typeof enc === "string"
-                ? enc.startsWith("\\x")
-                  ? Buffer.from(enc.slice(2), "hex")
-                  : Buffer.from(enc, "base64")
-                : Buffer.from(enc);
-            tokenOrApiKey = decryptToken(buf, config.tokenEncKey);
+          if (conn.connection_secrets) {
+            const secrets = Array.isArray(conn.connection_secrets)
+              ? conn.connection_secrets[0]
+              : (conn.connection_secrets as any);
+
+            const enc = secrets?.access_token_enc ?? secrets?.api_key_enc;
+            if (enc) {
+              const buf = parseByteaPayload(enc);
+              tokenOrApiKey = decryptToken(buf, config.tokenEncKey);
+            }
+
+            // Auto-refresh expired/expiring YouTube access token on demand
+            if (
+              target.platform === "youtube" &&
+              secrets?.refresh_token_enc &&
+              conn.token_expires_at &&
+              new Date(conn.token_expires_at).getTime() <= now.getTime() + 5 * 60 * 1000
+            ) {
+              try {
+                const rBuf = parseByteaPayload(secrets.refresh_token_enc);
+                const refreshToken = decryptToken(rBuf, config.tokenEncKey);
+                const refreshRes = await fetch("https://oauth2.googleapis.com/token", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                  body: new URLSearchParams({
+                    client_id: process.env.GOOGLE_CLIENT_ID || "",
+                    client_secret: process.env.GOOGLE_CLIENT_SECRET || "",
+                    refresh_token: refreshToken,
+                    grant_type: "refresh_token",
+                  }),
+                });
+                if (refreshRes.ok) {
+                  const refreshData: any = await refreshRes.json();
+                  if (typeof refreshData?.access_token === "string" && refreshData.access_token.length > 0) {
+                    const renewedToken: string = refreshData.access_token;
+                    tokenOrApiKey = renewedToken;
+                    const newAccessEnc = encryptToken(renewedToken, config.tokenEncKey);
+                    const newExpiresAt = new Date(
+                      now.getTime() + (refreshData.expires_in ?? 3600) * 1000
+                    ).toISOString();
+                    await supabase
+                      .from("connection_secrets")
+                      .update({ access_token_enc: newAccessEnc, updated_at: now.toISOString() })
+                      .eq("connection_id", conn.id);
+                    await supabase
+                      .from("connections")
+                      .update({
+                        token_expires_at: newExpiresAt,
+                        status: "active",
+                        updated_at: now.toISOString(),
+                      })
+                      .eq("id", conn.id);
+                  }
+                }
+              } catch (refreshErr) {
+                summary.errors.push(
+                  `YouTube token refresh failed for conn ${conn.id}: ${
+                    refreshErr instanceof Error ? refreshErr.message : String(refreshErr)
+                  }`
+                );
+              }
+            } else if (
+              target.platform === "tiktok" &&
+              secrets?.refresh_token_enc &&
+              conn.token_expires_at &&
+              new Date(conn.token_expires_at).getTime() <= now.getTime() + 5 * 60 * 1000
+            ) {
+              try {
+                const rBuf = parseByteaPayload(secrets.refresh_token_enc);
+                const refreshToken = decryptToken(rBuf, config.tokenEncKey);
+                const clientKey = process.env.TIKTOK_CLIENT_KEY || process.env.TIKTOK_CLIENT_ID || "";
+                const clientSecret = process.env.TIKTOK_CLIENT_SECRET || "";
+                const refreshRes = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                  body: new URLSearchParams({
+                    client_key: clientKey,
+                    client_secret: clientSecret,
+                    grant_type: "refresh_token",
+                    refresh_token: refreshToken,
+                  }),
+                });
+                if (refreshRes.ok) {
+                  const refreshData: any = await refreshRes.json();
+                  if (typeof refreshData?.access_token === "string" && refreshData.access_token.length > 0) {
+                    const renewedToken: string = refreshData.access_token;
+                    tokenOrApiKey = renewedToken;
+                    const newAccessEnc = encryptToken(renewedToken, config.tokenEncKey);
+                    const newRefreshEnc = refreshData.refresh_token
+                      ? encryptToken(refreshData.refresh_token, config.tokenEncKey)
+                      : undefined;
+                    const newExpiresAt = new Date(
+                      now.getTime() + (refreshData.expires_in ?? 86400) * 1000
+                    ).toISOString();
+                    const secretsUpdate: Record<string, unknown> = {
+                      access_token_enc: newAccessEnc,
+                      updated_at: now.toISOString(),
+                    };
+                    if (newRefreshEnc) {
+                      secretsUpdate.refresh_token_enc = newRefreshEnc;
+                    }
+                    await supabase
+                      .from("connection_secrets")
+                      .update(secretsUpdate)
+                      .eq("connection_id", conn.id);
+                    await supabase
+                      .from("connections")
+                      .update({
+                        token_expires_at: newExpiresAt,
+                        status: "active",
+                        updated_at: now.toISOString(),
+                      })
+                      .eq("id", conn.id);
+                  }
+                }
+              } catch (refreshErr) {
+                summary.errors.push(
+                  `TikTok token refresh failed for conn ${conn.id}: ${
+                    refreshErr instanceof Error ? refreshErr.message : String(refreshErr)
+                  }`
+                );
+              }
+            }
           }
         }
-      } catch {
-        // Fallback if secrets cannot be decrypted
+      } catch (secErr) {
+        summary.errors.push(
+          `Failed to resolve credentials for ${target.platform} target ${target.id}: ${
+            secErr instanceof Error ? secErr.message : String(secErr)
+          }`
+        );
       }
 
       // Execute target step
@@ -608,7 +739,8 @@ export async function runSchedulerCycle(
         media,
         publisher,
         now,
-        tokenOrApiKey
+        tokenOrApiKey,
+        connectionExternalAccountId
       );
 
       summary.processedCount++;

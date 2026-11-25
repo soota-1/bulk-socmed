@@ -1,25 +1,29 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { SettingsSchema, type Settings } from "@bulk-socmed/shared";
+import { SettingsSchema, MAX_VIDEO_SIZE_MB, type Settings } from "@bulk-socmed/shared";
+import { isR2Configured } from "@bulk-socmed/shared/r2";
 import { createClient } from "@/lib/supabase/server";
 
-const DEFAULT_SETTINGS: Required<Settings> & {
+function getDefaultSettings(): Required<Settings> & {
   timezone: string;
   max_video_size_mb: number;
-} = {
-  timezone: "Asia/Jakarta",
-  grace_minutes: 120,
-  tiktok_window_days: 2,
-  buffer_queue_limit: 10,
-  retry_backoff_minutes: [1, 5, 15],
-  instagram_prepare_lead_minutes: 10,
-  min_lead_minutes: 15,
-  media_retention_days: 3,
-  event_retention_days: 180,
-  max_video_size_mb: 50,
-  storage_quota_mb: 1024,
-  egress_quota_mb: 5120,
-  quota_warn_percent: 80,
-};
+} {
+  const r2Active = isR2Configured();
+  return {
+    timezone: "Asia/Jakarta",
+    grace_minutes: 120,
+    tiktok_window_days: 2,
+    buffer_queue_limit: 10,
+    retry_backoff_minutes: [1, 5, 15],
+    instagram_prepare_lead_minutes: 10,
+    min_lead_minutes: 15,
+    media_retention_days: 3,
+    event_retention_days: 180,
+    max_video_size_mb: MAX_VIDEO_SIZE_MB,
+    storage_quota_mb: r2Active ? 10240 : 1024,
+    egress_quota_mb: r2Active ? 0 : 5120,
+    quota_warn_percent: 80,
+  };
+}
 
 export async function GET() {
   const supabase = createClient();
@@ -47,7 +51,7 @@ export async function GET() {
     );
   }
 
-  const current: Record<string, unknown> = { ...DEFAULT_SETTINGS };
+  const current: Record<string, unknown> = { ...getDefaultSettings() };
   for (const row of rows ?? []) {
     current[row.key] = row.value;
   }
@@ -116,7 +120,7 @@ export async function PATCH(request: NextRequest) {
     .select("key, value")
     .eq("owner_id", user.id);
 
-  const full: Record<string, unknown> = { ...DEFAULT_SETTINGS };
+  const full: Record<string, unknown> = { ...getDefaultSettings() };
   for (const row of allRows ?? []) {
     full[row.key] = row.value;
   }

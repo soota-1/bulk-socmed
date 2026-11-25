@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { decryptToken, parseEncryptionKey } from "@bulk-socmed/shared";
+import { decryptToken, parseEncryptionKey, parseByteaPayload } from "@bulk-socmed/shared";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 
 export async function GET() {
@@ -54,28 +54,72 @@ export async function GET() {
     );
   }
   const encKey = parseEncryptionKey(encKeyHex);
-
-  const rawEnc = sec.api_key_enc;
-  const buf =
-    typeof rawEnc === "string"
-      ? rawEnc.startsWith("\\x")
-        ? Buffer.from(rawEnc.slice(2), "hex")
-        : Buffer.from(rawEnc, "base64")
-      : Buffer.from(rawEnc);
-
+  const buf = parseByteaPayload(sec.api_key_enc);
   const apiKey = decryptToken(buf, encKey);
 
   try {
-    const res = await fetch(`https://api.bufferapp.com/1/profiles.json?access_token=${apiKey}`);
-    if (!res.ok) {
-      throw new Error("Gagal mengambil channel dari Buffer");
+    let profiles: any[] = [];
+
+    // Query account organizations first
+    const orgsRes = await fetch("https://api.buffer.com", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        query: `
+          query GetBufferOrgs {
+            account {
+              organizations {
+                id
+              }
+            }
+          }
+        `,
+      }),
+    });
+
+    if (orgsRes.ok) {
+      const orgsData = await orgsRes.json();
+      const orgs = orgsData.data?.account?.organizations || [];
+      for (const org of orgs) {
+        const chRes = await fetch("https://api.buffer.com", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            query: `
+              query GetOrgChannels($orgId: OrganizationId!) {
+                channels(input: { organizationId: $orgId }) {
+                  id
+                  name
+                  displayName
+                  service
+                }
+              }
+            `,
+            variables: { orgId: org.id },
+          }),
+        });
+
+        if (chRes.ok) {
+          const chData = await chRes.json();
+          const list = chData.data?.channels;
+          if (Array.isArray(list)) {
+            profiles.push(...list);
+          }
+        }
+      }
     }
-    const profiles: any[] = await res.json();
+
     const tiktokProfiles = profiles
       .filter((p) => p.service === "tiktok")
       .map((p) => ({
         id: p.id,
-        name: p.formatted_username || p.service_username || "TikTok Profile",
+        name: p.displayName || p.name || p.formatted_username || p.service_username || "TikTok Profile",
         service: "tiktok",
       }));
 

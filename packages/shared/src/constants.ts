@@ -7,7 +7,8 @@ export const DEFAULT_INSTAGRAM_PREPARE_LEAD_MINUTES = 10;
 export const DEFAULT_TIKTOK_WINDOW_DAYS = 2;
 export const DEFAULT_GRACE_MINUTES = 120;
 
-export const MAX_VIDEO_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
+export const MAX_VIDEO_SIZE_MB = 1024; // 1 GB (Cloudflare R2 supports up to 5 TB per file)
+export const MAX_VIDEO_SIZE_BYTES = MAX_VIDEO_SIZE_MB * 1024 * 1024;
 export const MAX_THUMBNAIL_SIZE_BYTES = 8 * 1024 * 1024; // 8 MB
 export const MAX_TITLE_LENGTH = 100;
 

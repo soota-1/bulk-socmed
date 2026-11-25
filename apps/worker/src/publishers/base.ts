@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Platform, TargetStatus, PlannedTarget } from "@bulk-socmed/shared";
+export type { Platform };
 import type { CachedMedia } from "../media-cache";
 
 export interface StepTarget {

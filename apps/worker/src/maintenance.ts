@@ -1,6 +1,7 @@
 import { differenceInDays, differenceInHours, subDays } from "date-fns";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { encryptToken, decryptToken, type Platform } from "@bulk-socmed/shared";
+import { encryptToken, decryptToken, parseByteaPayload, type Platform } from "@bulk-socmed/shared";
+import { deleteR2Object, isR2Configured } from "@bulk-socmed/shared/r2";
 import type { WorkerConfig } from "./config";
 import { cleanMediaCache } from "./media-cache";
 
@@ -56,14 +57,22 @@ export async function cleanExpiredPostMedia(
 
     const diffDays = differenceInDays(now, maxTime);
     if (diffDays >= mediaRetentionDays) {
-      // 1. Remove video from Supabase Storage
+      const r2Active = isR2Configured();
+
+      // 1. Remove video from R2 (if configured) and Supabase Storage (legacy/fallback)
       if (post.video_object_path) {
-        await supabase.storage.from("videos").remove([post.video_object_path]);
+        if (r2Active) {
+          await deleteR2Object("videos", post.video_object_path).catch(() => {});
+        }
+        await supabase.storage?.from("videos").remove([post.video_object_path]).catch(() => {});
       }
 
-      // 2. Remove thumbnail from Supabase Storage if present
+      // 2. Remove thumbnail from R2 / Supabase Storage if present
       if (post.thumbnail_object_path) {
-        await supabase.storage.from("thumbnails").remove([post.thumbnail_object_path]);
+        if (r2Active) {
+          await deleteR2Object("thumbnails", post.thumbnail_object_path).catch(() => {});
+        }
+        await supabase.storage?.from("thumbnails").remove([post.thumbnail_object_path]).catch(() => {});
       }
 
       // 3. Remove local cache directory
@@ -108,7 +117,7 @@ export async function refreshExpiringTokens(
     .from("connections")
     .select("id, platform, token_expires_at, owner_id, connection_secrets(refresh_token_enc)")
     .eq("status", "active")
-    .in("platform", ["youtube", "instagram"])
+    .in("platform", ["youtube", "instagram", "tiktok"])
     .not("token_expires_at", "is", null);
 
   if (error || !conns) return 0;
@@ -132,12 +141,7 @@ export async function refreshExpiringTokens(
     if (!refreshEnc) continue;
 
     try {
-      const buf =
-        typeof refreshEnc === "string"
-          ? refreshEnc.startsWith("\\x")
-            ? Buffer.from(refreshEnc.slice(2), "hex")
-            : Buffer.from(refreshEnc, "base64")
-          : Buffer.from(refreshEnc);
+      const buf = parseByteaPayload(refreshEnc);
       const refreshToken = decryptToken(buf, config.tokenEncKey);
 
       let newAccessToken = "";
@@ -160,25 +164,45 @@ export async function refreshExpiringTokens(
               grant_type: "refresh_token",
             }),
           });
-          const data = await res.json();
+          const data: any = await res.json();
           if (!res.ok || !data.access_token) {
             throw new Error(data.error_description || "YouTube refresh failed");
           }
           newAccessToken = data.access_token;
           expiresInSeconds = data.expires_in ?? 3600;
-        } else {
+        } else if (conn.platform === "instagram") {
           // Instagram / Meta token refresh
           const res = await fetch(
             `https://graph.facebook.com/v19.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${
               process.env.META_CLIENT_ID || process.env.META_APP_ID || ""
             }&client_secret=${process.env.META_CLIENT_SECRET || process.env.META_APP_SECRET || ""}&fb_exchange_token=${refreshToken}`
           );
-          const data = await res.json();
+          const data: any = await res.json();
           if (!res.ok || !data.access_token) {
             throw new Error(data.error?.message || "Instagram refresh failed");
           }
           newAccessToken = data.access_token;
           expiresInSeconds = data.expires_in ?? 5184000;
+        } else if (conn.platform === "tiktok") {
+          // TikTok token refresh
+          const clientKey = process.env.TIKTOK_CLIENT_KEY || process.env.TIKTOK_CLIENT_ID || "";
+          const clientSecret = process.env.TIKTOK_CLIENT_SECRET || "";
+          const res = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({
+              client_key: clientKey,
+              client_secret: clientSecret,
+              grant_type: "refresh_token",
+              refresh_token: refreshToken,
+            }),
+          });
+          const data: any = await res.json();
+          if (!res.ok || !data.access_token) {
+            throw new Error(data.error_description || data.error?.message || "TikTok refresh failed");
+          }
+          newAccessToken = data.access_token;
+          expiresInSeconds = data.expires_in ?? 86400;
         }
       }
 

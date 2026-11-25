@@ -35,4 +35,12 @@ describe("planTargets", () => {
     const platforms = targets.map((t) => t.platform).sort();
     expect(platforms).toEqual(["instagram", "tiktok", "youtube"]);
   });
+
+  it("filters to only selected platforms and deduplicates", () => {
+    const targets = planTargets(dueAt, nowEarly, {
+      platforms: ["youtube", "instagram", "youtube"],
+    });
+    const platforms = targets.map((t) => t.platform);
+    expect(platforms).toEqual(["youtube", "instagram"]);
+  });
 });

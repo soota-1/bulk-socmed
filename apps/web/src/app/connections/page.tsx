@@ -67,7 +67,7 @@ function ConnectionsContent() {
     loadConnections();
   }, []);
 
-  async function handleOAuthAuthorize(platform: "youtube" | "instagram") {
+  async function handleOAuthAuthorize(platform: "youtube" | "instagram" | "tiktok") {
     try {
       setActionMessage({ type: "info", text: `Mengarahkan ke dialog masuk ${platform}...` });
       const res = await fetch(`/api/v1/connections/${platform}/authorize`, {
@@ -95,14 +95,22 @@ function ConnectionsContent() {
         method: "POST",
       });
       if (res.ok) {
-        setActionMessage({
-          type: "success",
-          text: `Permintaan uji ${platform} terkirim. Status akan diperbarui oleh worker.`,
-        });
-        setTimeout(loadConnections, 3000);
+        const data = await res.json().catch(() => ({}));
+        if (data.ok === false) {
+          setActionMessage({
+            type: "error",
+            text: `Uji ${platform} gagal: ${data.error?.message || "Kredensial tidak valid"}`,
+          });
+        } else {
+          setActionMessage({
+            type: "success",
+            text: data.message || `Uji koneksi ${platform} berhasil! Kredensial aktif dan terverifikasi.`,
+          });
+        }
+        loadConnections();
       } else {
-        const err = await res.json();
-        setActionMessage({ type: "error", text: `Uji gagal: ${err.error?.message}` });
+        const err = await res.json().catch(() => ({}));
+        setActionMessage({ type: "error", text: `Uji gagal: ${err.error?.message || "Kesalahan server"}` });
       }
     } catch {
       setActionMessage({ type: "error", text: "Terjadi kesalahan jaringan saat menguji koneksi." });
@@ -435,23 +443,25 @@ function ConnectionsContent() {
           );
         })()}
 
-        {/* ==================== 3. TikTok (Buffer) ==================== */}
+        {/* ==================== 3. TikTok (Direct API) ==================== */}
         {(() => {
           const tt = connections.find((c) => c.platform === "tiktok");
           const isConnected = tt?.status === "active";
-          const channelName = tt?.details?.buffer_channel_name || tt?.display_name;
+          const needsReauth = tt?.status === "needs_reauth";
 
           return (
             <div className="bg-white rounded-2xl border border-slate-200/80 p-6 flex flex-col justify-between shadow-xs hover:shadow-sm transition-shadow">
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <div className="w-12 h-12 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-white shadow-2xs">
+                  <div className="w-12 h-12 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-cyan-300 shadow-2xs">
                     <Music2 className="w-6 h-6" />
                   </div>
                   <span
                     className={`inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-full font-semibold border ${
                       isConnected
                         ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        : needsReauth
+                        ? "bg-amber-50 text-amber-700 border-amber-200"
                         : "bg-slate-100 text-slate-500 border-slate-200"
                     }`}
                   >
@@ -460,6 +470,11 @@ function ConnectionsContent() {
                         <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                         <span>Aktif</span>
                       </>
+                    ) : needsReauth ? (
+                      <>
+                        <AlertTriangle className="w-3 h-3 text-amber-600" />
+                        <span>Re-auth</span>
+                      </>
                     ) : (
                       "Belum Terhubung"
                     )}
@@ -467,12 +482,12 @@ function ConnectionsContent() {
                 </div>
 
                 <div>
-                  <h3 className="font-bold text-slate-900 text-base">TikTok (via Buffer)</h3>
+                  <h3 className="font-bold text-slate-900 text-base">TikTok</h3>
                   <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                    {channelName ? (
-                      <span className="font-semibold text-slate-800">Channel: {channelName}</span>
+                    {tt?.display_name ? (
+                      <span className="font-semibold text-slate-800">Akun: {tt.display_name}</span>
                     ) : (
-                      "Penerbitan gratis ke profil TikTok menggunakan Buffer API key."
+                      "Penerbitan langsung tanpa perantara via TikTok Content Posting API v2."
                     )}
                   </p>
                 </div>
@@ -491,65 +506,13 @@ function ConnectionsContent() {
 
               <div className="mt-6 pt-4 border-t border-slate-100">
                 {!isConnected ? (
-                  <div className="space-y-3">
-                    <div>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="text-[11px] font-semibold text-slate-600">Buffer Access Token</label>
-                        <a
-                          href="https://buffer.com/developers/apps"
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-[11px] text-indigo-600 hover:underline flex items-center gap-0.5"
-                        >
-                          Dapatkan Key <ExternalLink className="w-2.5 h-2.5" />
-                        </a>
-                      </div>
-                      <input
-                        type="password"
-                        placeholder="Tempel Buffer API Key..."
-                        value={bufferApiKey}
-                        onChange={(e) => setBufferApiKey(e.target.value)}
-                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-slate-50/50 focus:bg-white"
-                      />
-                    </div>
-
-                    {bufferChannels.length === 0 ? (
-                      <button
-                        onClick={handleFetchBufferChannels}
-                        disabled={loadingChannels || !bufferApiKey.trim()}
-                        className="w-full py-2.5 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-semibold transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <KeyRound className="w-3.5 h-3.5" />
-                        <span>{loadingChannels ? "Memverifikasi..." : "Verifikasi & Pilih Channel"}</span>
-                      </button>
-                    ) : (
-                      <div className="space-y-2">
-                        <label className="block text-[11px] font-semibold text-slate-600">Pilih Channel TikTok</label>
-                        <select
-                          value={selectedChannelId}
-                          onChange={(e) => setSelectedChannelId(e.target.value)}
-                          className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-                        >
-                          {bufferChannels.map((ch) => (
-                            <option key={ch.id} value={ch.id}>
-                              {ch.name}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          onClick={handleSaveTikTokChannel}
-                          disabled={loadingChannels}
-                          className="w-full py-2 px-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold transition cursor-pointer"
-                        >
-                          Simpan Channel
-                        </button>
-                      </div>
-                    )}
-
-                    {bufferError && (
-                      <p className="text-[11px] text-rose-600 font-medium">{bufferError}</p>
-                    )}
-                  </div>
+                  <button
+                    onClick={() => handleOAuthAuthorize("tiktok")}
+                    className="w-full py-2.5 px-3.5 rounded-xl bg-slate-900 hover:bg-slate-800 active:bg-black text-white text-xs font-semibold transition shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Music2 className="w-4 h-4 text-cyan-300" />
+                    <span>Hubungkan dengan TikTok</span>
+                  </button>
                 ) : (
                   <div className="flex gap-2">
                     <button

@@ -1,6 +1,11 @@
 import { addMinutes } from "date-fns";
 import type { PlannedTarget } from "@bulk-socmed/shared";
 import {
+  createR2SignedDownloadUrl,
+  headR2Object,
+  isR2Configured,
+} from "@bulk-socmed/shared/r2";
+import {
   type Publisher,
   type StepContext,
   type StepResult,
@@ -12,6 +17,7 @@ import {
 export interface InstagramContainerOptions {
   caption: string;
   coverFilePath?: string;
+  coverUrl?: string;
   accessToken?: string;
 }
 
@@ -34,7 +40,7 @@ export interface InstagramApiClient {
 export class InstagramPublisher implements Publisher {
   readonly platform = "instagram" as const;
 
-  constructor(private readonly apiClient: InstagramApiClient) {}
+  constructor(private readonly apiClient: InstagramApiClient) { }
 
   plan(dueAt: Date): PlannedTarget {
     // Reels preparation starts 10 minutes before due_at
@@ -50,7 +56,15 @@ export class InstagramPublisher implements Publisher {
       });
     }
 
-    const userId = externalAccountId ?? "me";
+    if (!externalAccountId || externalAccountId === "me") {
+      return createStepError(
+        "ig_account_missing",
+        "ID Akun Bisnis Instagram belum ditemukan. Pastikan IG Profesional sudah ditautkan ke Facebook Page dan hubungkan ulang di menu Koneksi.",
+        { isAuthError: true }
+      );
+    }
+
+    const userId = externalAccountId;
     const step = target.step;
 
     // 1. Check publishing limit
@@ -78,9 +92,32 @@ export class InstagramPublisher implements Publisher {
             ? `${post.caption}\n${post.hashtags}`
             : post.caption;
 
+        let coverUrl: string | undefined;
+        if (post.thumbnail_object_path) {
+          try {
+            if (isR2Configured() && (await headR2Object("thumbnails", post.thumbnail_object_path))) {
+              coverUrl = await createR2SignedDownloadUrl({
+                folder: "thumbnails",
+                objectPath: post.thumbnail_object_path,
+                expiresInSeconds: 3600,
+              });
+            } else if (ctx.supabase?.storage) {
+              const { data: signed } = await ctx.supabase.storage
+                .from("thumbnails")
+                .createSignedUrl(post.thumbnail_object_path, 3600);
+              if (signed?.signedUrl) {
+                coverUrl = signed.signedUrl;
+              }
+            }
+          } catch {
+            // Non-blocking: proceed without cover_url if signing fails
+          }
+        }
+
         const { containerId, uploadUrl } = await this.apiClient.createContainer(userId, {
           caption: fullCaption,
           coverFilePath: media.thumbFilePath,
+          ...(coverUrl ? { coverUrl } : {}),
           accessToken,
         });
 

@@ -21,7 +21,10 @@ export function planTargets(
   const instagramLead =
     options?.instagramPrepareLeadMinutes ?? DEFAULT_INSTAGRAM_PREPARE_LEAD_MINUTES;
 
-  const platforms: Platform[] = ["youtube", "instagram", "tiktok"];
+  const platforms: Platform[] =
+    options?.platforms && options.platforms.length > 0
+      ? Array.from(new Set(options.platforms))
+      : ["youtube", "instagram", "tiktok"];
 
   return platforms.map((platform): PlannedTarget => {
     let dispatch_at: Date;

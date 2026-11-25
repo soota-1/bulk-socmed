@@ -13,10 +13,15 @@ export async function GET(
   const state = searchParams.get("state");
   const errorParam = searchParams.get("error");
 
+  const origin = request.nextUrl.origin || request.headers.get("origin") || "http://localhost:3000";
+  const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL;
   const appUrl =
-    process.env.NEXT_PUBLIC_APP_URL ||
-    request.headers.get("origin") ||
-    "http://localhost:3000";
+    configuredAppUrl &&
+    !configuredAppUrl.includes("<") &&
+    !configuredAppUrl.includes("nama-app") &&
+    !configuredAppUrl.includes("your-app")
+      ? configuredAppUrl
+      : origin;
 
   if (errorParam) {
     return NextResponse.redirect(`${appUrl}/connections?error=${encodeURIComponent(errorParam)}`);
@@ -118,16 +123,62 @@ export async function GET(
       accessToken = tokenData.access_token;
       expiresInSeconds = tokenData.expires_in ?? 5184000; // 60 days for long-lived
 
-      // Fetch user accounts
-      try {
-        const meRes = await fetch(
-          `https://graph.facebook.com/v19.0/me/accounts?access_token=${accessToken}`
+      // Fetch linked Facebook Pages and their Instagram Business Account
+      const meRes = await fetch(
+        `https://graph.facebook.com/v19.0/me/accounts?fields=id,name,instagram_business_account{id,username,name}&access_token=${encodeURIComponent(accessToken)}`
+      );
+      const meData: any = await meRes.json();
+      const pages: any[] = meData.data ?? [];
+      const igPage = pages.find((p) => p.instagram_business_account?.id);
+
+      if (igPage?.instagram_business_account) {
+        const ig = igPage.instagram_business_account;
+        externalAccountId = ig.id;
+        displayName = ig.username ? `@${ig.username}` : (ig.name || igPage.name || displayName);
+      } else {
+        throw new Error(
+          "Tidak ditemukan akun Instagram Bisnis/Kreator yang tertaut ke Halaman Facebook Anda. Pastikan: (1) Instagram sudah diubah ke Akun Profesional, (2) sudah ditautkan ke Halaman Facebook (Facebook Page), dan (3) Halaman Facebook dicentang saat jendela izin login."
         );
-        const meData = await meRes.json();
-        const page = meData.data?.[0];
-        if (page) {
-          displayName = page.name ?? displayName;
-          externalAccountId = page.id;
+      }
+    } else if (platform === "tiktok") {
+      const clientKey = process.env.TIKTOK_CLIENT_KEY || process.env.TIKTOK_CLIENT_ID || "";
+      const clientSecret = process.env.TIKTOK_CLIENT_SECRET || "";
+
+      const tokenRes = await fetch("https://open.tiktokapis.com/v2/oauth/token/", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_key: clientKey,
+          client_secret: clientSecret,
+          code,
+          grant_type: "authorization_code",
+          redirect_uri: redirectUri,
+        }),
+      });
+
+      const tokenData = await tokenRes.json();
+      if (!tokenRes.ok || !tokenData.access_token) {
+        throw new Error(
+          tokenData.error_description || tokenData.error?.message || "Gagal menukar kode otorisasi TikTok"
+        );
+      }
+
+      accessToken = tokenData.access_token;
+      refreshToken = tokenData.refresh_token;
+      expiresInSeconds = tokenData.expires_in ?? 86400; // 24 hours
+      externalAccountId = tokenData.open_id;
+
+      // Fetch user profile info
+      try {
+        const userRes = await fetch(
+          "https://open.tiktokapis.com/v2/user/info/?fields=open_id,union_id,avatar_url,display_name,username",
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        const userData: any = await userRes.json();
+        const u = userData?.data?.user;
+        if (u) {
+          displayName = u.username ? `@${u.username}` : (u.display_name || displayName);
+          if (u.open_id) externalAccountId = u.open_id;
         }
       } catch {
         // Fallback display name
@@ -143,41 +194,99 @@ export async function GET(
 
     const adminSupabase = createAdminClient();
 
-    // 4. Upsert connection record
-    const { data: conn, error: connError } = await adminSupabase
+    // 4. Find existing connection or insert
+    const { data: existingConn } = await adminSupabase
       .from("connections")
-      .upsert(
-        {
-          owner_id: user.id,
-          platform,
-          provider: platform === "youtube" ? "youtube_api" : "instagram_graph",
+      .select("id")
+      .eq("owner_id", user.id)
+      .eq("platform", platform)
+      .order("id", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    let conn: { id: number };
+
+    const providerName =
+      platform === "youtube"
+        ? "youtube_api"
+        : platform === "instagram"
+        ? "instagram_graph"
+        : "tiktok_direct";
+
+    if (existingConn) {
+      const { data: updated, error: updateErr } = await adminSupabase
+        .from("connections")
+        .update({
+          provider: providerName,
           display_name: displayName,
           external_account_id: externalAccountId,
           status: "active",
           token_expires_at: expiresAt,
           updated_at: new Date().toISOString(),
-        },
-        { onConflict: "owner_id, platform" }
-      )
-      .select("id")
-      .single();
+        })
+        .eq("id", existingConn.id)
+        .select("id")
+        .single();
 
-    if (connError || !conn) {
-      throw new Error(`Gagal menyimpan koneksi: ${connError?.message}`);
+      if (updateErr || !updated) {
+        throw new Error(`Gagal memperbarui koneksi: ${updateErr?.message}`);
+      }
+      conn = updated;
+    } else {
+      const { data: inserted, error: insertErr } = await adminSupabase
+        .from("connections")
+        .insert({
+          owner_id: user.id,
+          platform,
+          provider: providerName,
+          display_name: displayName,
+          external_account_id: externalAccountId,
+          status: "active",
+          token_expires_at: expiresAt,
+          updated_at: new Date().toISOString(),
+        })
+        .select("id")
+        .single();
+
+      if (insertErr || !inserted) {
+        throw new Error(`Gagal menyimpan koneksi: ${insertErr?.message}`);
+      }
+      conn = inserted;
     }
 
-    // 5. Upsert secrets
-    const { error: secError } = await adminSupabase
+    // 5. Save secrets (update if exists, else insert)
+    const { data: existingSec } = await adminSupabase
       .from("connection_secrets")
-      .upsert({
-        connection_id: conn.id,
-        access_token_enc: accessEnc,
-        refresh_token_enc: refreshEnc,
-        updated_at: new Date().toISOString(),
-      });
+      .select("connection_id")
+      .eq("connection_id", conn.id)
+      .maybeSingle();
 
-    if (secError) {
-      throw new Error(`Gagal menyimpan rahasia token: ${secError.message}`);
+    if (existingSec) {
+      const { error: secError } = await adminSupabase
+        .from("connection_secrets")
+        .update({
+          access_token_enc: accessEnc,
+          refresh_token_enc: refreshEnc,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("connection_id", conn.id);
+
+      if (secError) {
+        throw new Error(`Gagal menyimpan rahasia token: ${secError.message}`);
+      }
+    } else {
+      const { error: secError } = await adminSupabase
+        .from("connection_secrets")
+        .insert({
+          connection_id: conn.id,
+          access_token_enc: accessEnc,
+          refresh_token_enc: refreshEnc,
+          updated_at: new Date().toISOString(),
+        });
+
+      if (secError) {
+        throw new Error(`Gagal menyimpan rahasia token: ${secError.message}`);
+      }
     }
 
     // 6. Release any targets held due to needs_reauth

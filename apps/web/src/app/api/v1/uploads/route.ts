@@ -1,6 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { UploadRequestSchema, MAX_VIDEO_SIZE_BYTES, MAX_THUMBNAIL_SIZE_BYTES } from "@bulk-socmed/shared";
+import {
+  UploadRequestSchema,
+  MAX_VIDEO_SIZE_BYTES,
+  MAX_THUMBNAIL_SIZE_BYTES,
+} from "@bulk-socmed/shared";
+import { createR2SignedUploadUrl, isR2Configured } from "@bulk-socmed/shared/r2";
 import { createClient } from "@/lib/supabase/server";
+
+const SUPABASE_FREE_MAX_BYTES = 50 * 1024 * 1024;
 
 export async function POST(request: NextRequest) {
   try {
@@ -37,7 +44,7 @@ export async function POST(request: NextRequest) {
     // Check size limit specifically
     const maxBytes = kind === "video" ? MAX_VIDEO_SIZE_BYTES : MAX_THUMBNAIL_SIZE_BYTES;
     if (size_bytes > maxBytes) {
-      const limitMb = maxBytes / (1024 * 1024);
+      const limitMb = Math.round(maxBytes / (1024 * 1024));
       return NextResponse.json(
         {
           error: {
@@ -53,22 +60,64 @@ export async function POST(request: NextRequest) {
     const bucket = kind === "video" ? "videos" : "thumbnails";
     const uploadId = crypto.randomUUID();
     const objectPath = `${user.id}/${uploadId}/${filename}`;
+    const useR2 = isR2Configured();
 
-    // Create signed upload URL in Supabase Storage
-    const { data: uploadData, error: uploadErr } = await supabase.storage
-      .from(bucket)
-      .createSignedUploadUrl(objectPath);
+    let signedUrl = "";
+    let uploadToken: string | undefined;
 
-    if (uploadErr || !uploadData) {
-      return NextResponse.json(
-        {
-          error: {
-            code: "storage_error",
-            message: `Gagal membuat URL unggah: ${uploadErr?.message}`,
+    if (useR2) {
+      try {
+        signedUrl = await createR2SignedUploadUrl({
+          folder: bucket,
+          objectPath,
+          contentType: content_type,
+          expiresInSeconds: 3600,
+        });
+      } catch (r2Err) {
+        return NextResponse.json(
+          {
+            error: {
+              code: "storage_error",
+              message: `Gagal membuat URL unggah R2: ${
+                r2Err instanceof Error ? r2Err.message : String(r2Err)
+              }`,
+            },
           },
-        },
-        { status: 500 }
-      );
+          { status: 500 }
+        );
+      }
+    } else {
+      if (size_bytes > SUPABASE_FREE_MAX_BYTES) {
+        return NextResponse.json(
+          {
+            error: {
+              code: "r2_not_configured",
+              message:
+                "File > 50 MB membutuhkan Cloudflare R2. Lengkapi R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, dan R2_BUCKET_NAME di .env.",
+            },
+          },
+          { status: 400 }
+        );
+      }
+
+      // Fallback to Supabase Storage when R2 is not configured yet
+      const { data: uploadData, error: uploadErr } = await supabase.storage
+        .from(bucket)
+        .createSignedUploadUrl(objectPath);
+
+      if (uploadErr || !uploadData) {
+        return NextResponse.json(
+          {
+            error: {
+              code: "storage_error",
+              message: `Gagal membuat URL unggah: ${uploadErr?.message}`,
+            },
+          },
+          { status: 500 }
+        );
+      }
+      signedUrl = uploadData.signedUrl;
+      uploadToken = uploadData.token;
     }
 
     // Insert pending upload record into `uploads` table
@@ -116,12 +165,13 @@ export async function POST(request: NextRequest) {
         upload_id: uploadId,
         kind,
         bucket,
+        storage_provider: useR2 ? "r2" : "supabase",
         object_path: objectPath,
-        signed_upload_url: uploadData.signedUrl,
+        signed_upload_url: signedUrl,
         upload: {
           method: "signed_url",
-          url: uploadData.signedUrl,
-          token: uploadData.token,
+          url: signedUrl,
+          ...(uploadToken ? { token: uploadToken } : {}),
         },
         warnings,
       },

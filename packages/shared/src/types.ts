@@ -25,9 +25,16 @@ export interface PlannedTarget {
   dispatch_at: Date;
 }
 
+export interface PlatformMetadataOverride {
+  title?: string;
+  caption?: string;
+  hashtags?: string;
+}
+
 export interface PlannerOptions {
   tiktokWindowDays?: number;
   instagramPrepareLeadMinutes?: number;
+  platforms?: Platform[];
 }
 
 export interface NextFreeSlotResult {

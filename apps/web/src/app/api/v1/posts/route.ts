@@ -6,7 +6,7 @@ import {
   DEFAULT_SLOT_TIMES,
   DEFAULT_MIN_LEAD_MINUTES,
 } from "@bulk-socmed/shared";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClient } from "@/lib/supabase/server";
 
 export async function GET(request: NextRequest) {
   const supabase = createClient();
@@ -76,8 +76,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { video_upload_id, thumbnail_upload_id, title, caption, hashtags, schedule, mode } =
-      parsed.data;
+    const {
+      video_upload_id,
+      thumbnail_upload_id,
+      title,
+      caption,
+      hashtags,
+      platforms,
+      platform_overrides,
+      schedule,
+      mode,
+    } = parsed.data;
 
     // Verify video upload existence
     const { data: videoUpload, error: videoErr } = await supabase
@@ -133,8 +142,8 @@ export async function POST(request: NextRequest) {
       caption.split("\n")[0]?.trim().slice(0, 100) ||
       "Untitled Video";
 
-    // Plan target dispatch times
-    const targets = planTargets(dueAt, now);
+    // Plan target dispatch times (only for selected platforms, defaults to all 3)
+    const targets = planTargets(dueAt, now, { platforms });
 
     const uploadIds = [video_upload_id];
     let thumbnailPath: string | null = null;
@@ -195,6 +204,37 @@ export async function POST(request: NextRequest) {
         },
         { status: 500 }
       );
+    }
+
+    // Persist per-platform title/caption/hashtags overrides in targets.external_state
+    if (platform_overrides && postId) {
+      const adminSupabase = createAdminClient();
+      const targetPlatforms = targets.map((t) => t.platform);
+
+      for (const plat of targetPlatforms) {
+        const ov = platform_overrides[plat];
+        if (!ov) continue;
+
+        const overrideState: Record<string, string> = {};
+        if (ov.title !== undefined && ov.title.trim()) {
+          overrideState.override_title = ov.title.trim();
+        }
+        if (ov.caption !== undefined && ov.caption.trim()) {
+          overrideState.override_caption = ov.caption.trim();
+        }
+        if (ov.hashtags !== undefined && ov.hashtags.trim()) {
+          overrideState.override_hashtags = ov.hashtags.trim();
+        }
+
+        if (Object.keys(overrideState).length > 0) {
+          await adminSupabase
+            .from("targets")
+            .update({ external_state: overrideState })
+            .eq("post_id", postId)
+            .eq("platform", plat)
+            .eq("owner_id", user.id);
+        }
+      }
     }
 
     return NextResponse.json(

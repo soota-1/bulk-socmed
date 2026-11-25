@@ -92,6 +92,43 @@ describe("InstagramPublisher — Reels state machine & anti-duplicate guard", ()
     expect(result.externalState?.upload_url).toBe("https://rupload.facebook.com/reels/999");
   });
 
+  it("Step create_container: passes signed coverUrl when thumbnail_object_path and storage exist", async () => {
+    vi.mocked(mockClient.createContainer).mockResolvedValueOnce({
+      containerId: "container_with_cover",
+      uploadUrl: "https://rupload.facebook.com/reels/1000",
+    });
+
+    const mockSupabase = {
+      storage: {
+        from: vi.fn().mockReturnValue({
+          createSignedUrl: vi.fn().mockResolvedValue({
+            data: { signedUrl: "https://cdn.example.com/signed-cover.jpg" },
+            error: null,
+          }),
+        }),
+      },
+    } as any;
+
+    const ctx: StepContext = {
+      ...baseContext,
+      supabase: mockSupabase,
+      target: {
+        ...baseContext.target,
+        status: "uploading",
+        step: "create_container",
+      },
+    };
+
+    const result = await publisher.advance(ctx);
+    expect(mockClient.createContainer).toHaveBeenCalledWith("ig_account_12345", {
+      caption: "Resep nasi goreng 5 menit enak\n#resep #masak",
+      coverFilePath: "C:/cache/20/thumbnail.jpg",
+      coverUrl: "https://cdn.example.com/signed-cover.jpg",
+      accessToken: "mock_ig_access_token",
+    });
+    expect(result.externalId).toBe("container_with_cover");
+  });
+
   it("Step upload_video: uploads file and advances to wait_finished", async () => {
     vi.mocked(mockClient.uploadMedia).mockResolvedValueOnce();
 
