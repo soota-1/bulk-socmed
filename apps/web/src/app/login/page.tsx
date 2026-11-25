@@ -24,7 +24,7 @@ export default function LoginPage() {
     });
 
     if (error) {
-      setErrorMsg("Email atau kata sandi tidak cocok. Pastikan akun sudah dibuat via 'pnpm create:owner'.");
+      setErrorMsg("Email atau kata sandi tidak cocok. Pastiin lagi");
       setLoading(false);
       return;
     }
