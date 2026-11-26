@@ -4,7 +4,7 @@ export type Platform = "youtube" | "instagram" | "tiktok";
 
 export type ConnectionStatus = "active" | "needs_reauth" | "disabled" | "not_connected";
 
-export type ConnectionProvider = "youtube_api" | "instagram_graph" | "buffer";
+export type ConnectionProvider = "youtube_api" | "instagram_graph" | "buffer" | "tiktok_direct" | "tiktok_api";
 
 export type TargetStatus =
   | "draft"

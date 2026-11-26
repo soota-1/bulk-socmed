@@ -211,7 +211,7 @@ export async function GET(
         ? "youtube_api"
         : platform === "instagram"
         ? "instagram_graph"
-        : "tiktok_direct";
+        : "buffer";
 
     if (existingConn) {
       const { data: updated, error: updateErr } = await adminSupabase
