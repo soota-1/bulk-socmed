@@ -128,6 +128,12 @@ export async function GET(
         `https://graph.facebook.com/v19.0/me/accounts?fields=id,name,access_token,instagram_business_account{id,username,name}&access_token=${encodeURIComponent(accessToken)}`
       );
       const meData: any = await meRes.json();
+      if (!meRes.ok || meData.error) {
+        throw new Error(
+          `Gagal mengambil data Halaman dari Meta API: ${meData.error?.message || `HTTP ${meRes.status}`}`
+        );
+      }
+
       const pages: any[] = meData.data ?? [];
       let igAccount = pages.find((p) => p.instagram_business_account?.id)?.instagram_business_account;
 
@@ -156,8 +162,19 @@ export async function GET(
         externalAccountId = igAccount.id;
         displayName = igAccount.username ? `@${igAccount.username}` : (igAccount.name || displayName);
       } else if (pages.length === 0) {
+        let loggedInUserName = "";
+        try {
+          const userRes = await fetch(
+            `https://graph.facebook.com/v19.0/me?fields=id,name&access_token=${encodeURIComponent(accessToken)}`
+          );
+          if (userRes.ok) {
+            const userData: any = await userRes.json();
+            if (userData.name) loggedInUserName = ` (Akun login: ${userData.name})`;
+          }
+        } catch {}
+
         throw new Error(
-          "Tidak ada Halaman Facebook yang terdeteksi. Saat jendela login Facebook muncul, pastikan Anda mencentang/memilih Halaman Facebook Anda (jangan klik lewati/uncheck Halaman)."
+          `Tidak ada Halaman Facebook yang terdeteksi${loggedInUserName}. Kemungkinan: (1) Akun Facebook yang sedang aktif di browser berbeda dengan akun pemilik Halaman, atau (2) Izin Halaman belum dicentang di Facebook. Solusi: Buka https://www.facebook.com/settings?tab=applications -> hapus akses 'Bulk Socmed' -> lalu klik Hubungkan dengan Instagram kembali dan centang Halaman Facebook Anda.`
         );
       } else {
         const pageNames = pages.map((p) => `"${p.name || p.id}"`).join(", ");

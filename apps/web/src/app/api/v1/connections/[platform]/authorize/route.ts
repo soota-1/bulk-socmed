@@ -84,6 +84,7 @@ export async function POST(
       redirect_uri: redirectUri,
       response_type: "code",
       scope: scopes,
+      auth_type: "rerequest",
       state,
     });
     authorizeUrl = `https://www.facebook.com/v19.0/dialog/oauth?${query.toString()}`;

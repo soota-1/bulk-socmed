@@ -432,12 +432,19 @@ export class StandardTikTokApiClient implements TikTokApiClient {
     };
   }
 
-  async uploadVideoFile(uploadUrl: string, filePath: string, videoSize: number, chunkSize: number): Promise<void> {
+  async uploadVideoFile(
+    uploadUrl: string,
+    filePath: string,
+    videoSize: number,
+    chunkSize: number,
+    totalChunkCount = 1
+  ): Promise<void> {
     const fileHandle = await fs.open(filePath, "r");
     try {
-      let start = 0;
-      while (start < videoSize) {
-        const end = Math.min(start + chunkSize - 1, videoSize - 1);
+      for (let i = 0; i < totalChunkCount; i++) {
+        const start = i * chunkSize;
+        // The final chunk absorbs any trailing bytes (up to 128 MB max as per TikTok spec)
+        const end = i === totalChunkCount - 1 ? videoSize - 1 : start + chunkSize - 1;
         const length = end - start + 1;
         const buffer = Buffer.alloc(length);
         const { bytesRead } = await fileHandle.read(buffer, 0, length, start);
@@ -457,10 +464,10 @@ export class StandardTikTokApiClient implements TikTokApiClient {
         // TikTok chunk uploads return 200/201 or 308 (resume incomplete) on success
         if (!res.ok && res.status !== 308) {
           const errText = await res.text();
-          throw new Error(`Gagal mengunggah chunk video TikTok (${start}-${end}/${videoSize}): HTTP ${res.status} ${errText}`);
+          throw new Error(
+            `Gagal mengunggah chunk ${i + 1}/${totalChunkCount} video TikTok (${start}-${end}/${videoSize}): HTTP ${res.status} ${errText}`
+          );
         }
-
-        start += length;
       }
     } finally {
       await fileHandle.close();

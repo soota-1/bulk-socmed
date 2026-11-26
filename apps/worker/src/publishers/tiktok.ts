@@ -33,14 +33,21 @@ export interface TikTokInitVideoOptions {
 export interface TikTokApiClient {
   getCreatorInfo(accessToken: string): Promise<TikTokCreatorInfo>;
   initVideoUpload(opts: TikTokInitVideoOptions): Promise<{ publishId: string; uploadUrl: string }>;
-  uploadVideoFile(uploadUrl: string, filePath: string, videoSize: number, chunkSize: number): Promise<void>;
+  uploadVideoFile(
+    uploadUrl: string,
+    filePath: string,
+    videoSize: number,
+    chunkSize: number,
+    totalChunkCount?: number
+  ): Promise<void>;
   checkPublishStatus(
     publishId: string,
     accessToken: string
   ): Promise<{ status: "PROCESSING_DOWNLOAD" | "PROCESSING_UPLOAD" | "SUCCESS" | "FAILED"; failReason?: string }>;
 }
 
-const CHUNK_SIZE_BYTES = 64 * 1024 * 1024; // 64 MB chunk standard for TikTok
+const MAX_SINGLE_CHUNK_BYTES = 64 * 1024 * 1024; // 64 MB max single chunk
+const MULTI_CHUNK_SIZE_BYTES = 32 * 1024 * 1024; // 32 MB per chunk for multi-chunk
 
 export class TikTokPublisher implements Publisher {
   readonly platform = "tiktok" as const;
@@ -93,8 +100,13 @@ export class TikTokPublisher implements Publisher {
           privacyLevel = options[0];
         }
 
-        const chunkSize = videoSize < CHUNK_SIZE_BYTES ? videoSize : CHUNK_SIZE_BYTES;
-        const totalChunkCount = Math.ceil(videoSize / chunkSize);
+        let chunkSize = videoSize;
+        let totalChunkCount = 1;
+
+        if (videoSize > MAX_SINGLE_CHUNK_BYTES) {
+          chunkSize = MULTI_CHUNK_SIZE_BYTES;
+          totalChunkCount = Math.floor(videoSize / chunkSize);
+        }
 
         const fullCaption =
           post.hashtags && !post.caption.includes(post.hashtags)
@@ -116,6 +128,7 @@ export class TikTokPublisher implements Publisher {
             ...target.external_state,
             upload_url: uploadUrl,
             chunk_size: chunkSize,
+            total_chunk_count: totalChunkCount,
             video_size: videoSize,
           },
         });
@@ -134,9 +147,20 @@ export class TikTokPublisher implements Publisher {
       try {
         const fileStat = await fs.stat(media.videoFilePath);
         const videoSize = fileStat.size;
-        const chunkSize = (target.external_state?.chunk_size as number) || (videoSize < CHUNK_SIZE_BYTES ? videoSize : CHUNK_SIZE_BYTES);
+        const chunkSize =
+          (target.external_state?.chunk_size as number) ||
+          (videoSize > MAX_SINGLE_CHUNK_BYTES ? MULTI_CHUNK_SIZE_BYTES : videoSize);
+        const totalChunkCount =
+          (target.external_state?.total_chunk_count as number) ||
+          (videoSize > MAX_SINGLE_CHUNK_BYTES ? Math.floor(videoSize / chunkSize) : 1);
 
-        await this.apiClient.uploadVideoFile(uploadUrl, media.videoFilePath, videoSize, chunkSize);
+        await this.apiClient.uploadVideoFile(
+          uploadUrl,
+          media.videoFilePath,
+          videoSize,
+          chunkSize,
+          totalChunkCount
+        );
 
         return createStepSuccess("awaiting_platform", "wait_status", {
           externalId: target.external_id,

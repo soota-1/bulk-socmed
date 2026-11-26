@@ -104,6 +104,46 @@ describe("TikTokPublisher — Direct Upload via Content Posting API v2", () => {
     expect(result.nextStep).toBe("upload_chunks");
     expect(result.externalId).toBe("v_pub_tiktok_123");
     expect(result.externalState?.upload_url).toBe("https://open-upload.tiktok.com/upload/v1");
+    expect(result.externalState?.total_chunk_count).toBe(1);
+  });
+
+  it("advance step init_upload: calculates totalChunkCount with Math.floor for videos > 64 MB", async () => {
+    const largeVideoPath = path.join(tempDir, "large-video.mp4");
+    const hundredMb = 100 * 1024 * 1024;
+    const fh = await fs.open(largeVideoPath, "w");
+    await fh.truncate(hundredMb);
+    await fh.close();
+
+    vi.mocked(mockApiClient.getCreatorInfo).mockResolvedValueOnce({
+      creator_username: "testcreator",
+      privacy_level_options: ["PUBLIC_TO_EVERYONE"],
+    });
+
+    vi.mocked(mockApiClient.initVideoUpload).mockResolvedValueOnce({
+      publishId: "v_pub_large_123",
+      uploadUrl: "https://open-upload.tiktok.com/upload/v1",
+    });
+
+    const ctx = createBaseContext({
+      media: { videoFilePath: largeVideoPath },
+    });
+    const result = await publisher.advance(ctx);
+
+    const expectedChunkSize = 32 * 1024 * 1024;
+    const expectedChunkCount = Math.floor(hundredMb / expectedChunkSize); // 3
+
+    expect(mockApiClient.initVideoUpload).toHaveBeenCalledWith({
+      title: "Review produk keren\n#fyp #viral",
+      privacyLevel: "PUBLIC_TO_EVERYONE",
+      videoSize: hundredMb,
+      chunkSize: expectedChunkSize,
+      totalChunkCount: expectedChunkCount,
+      accessToken: "valid_tiktok_access_token",
+    });
+
+    expect(result.nextStatus).toBe("uploading");
+    expect(result.nextStep).toBe("upload_chunks");
+    expect(result.externalState?.total_chunk_count).toBe(expectedChunkCount);
   });
 
   it("advance step upload_chunks: uploads file bytes directly to upload_url", async () => {
@@ -133,7 +173,8 @@ describe("TikTokPublisher — Direct Upload via Content Posting API v2", () => {
       "https://open-upload.tiktok.com/upload/v1",
       dummyVideoPath,
       1024,
-      1024
+      1024,
+      1
     );
 
     expect(result.nextStatus).toBe("awaiting_platform");
