@@ -125,19 +125,44 @@ export async function GET(
 
       // Fetch linked Facebook Pages and their Instagram Business Account
       const meRes = await fetch(
-        `https://graph.facebook.com/v19.0/me/accounts?fields=id,name,instagram_business_account{id,username,name}&access_token=${encodeURIComponent(accessToken)}`
+        `https://graph.facebook.com/v19.0/me/accounts?fields=id,name,access_token,instagram_business_account{id,username,name}&access_token=${encodeURIComponent(accessToken)}`
       );
       const meData: any = await meRes.json();
       const pages: any[] = meData.data ?? [];
-      const igPage = pages.find((p) => p.instagram_business_account?.id);
+      let igAccount = pages.find((p) => p.instagram_business_account?.id)?.instagram_business_account;
 
-      if (igPage?.instagram_business_account) {
-        const ig = igPage.instagram_business_account;
-        externalAccountId = ig.id;
-        displayName = ig.username ? `@${ig.username}` : (ig.name || igPage.name || displayName);
-      } else {
+      // Fallback: If not returned directly on /me/accounts, query each page with its page access token
+      if (!igAccount && pages.length > 0) {
+        for (const p of pages) {
+          if (!p.id || !p.access_token) continue;
+          try {
+            const pageRes = await fetch(
+              `https://graph.facebook.com/v19.0/${p.id}?fields=instagram_business_account{id,username,name}&access_token=${encodeURIComponent(p.access_token)}`
+            );
+            if (pageRes.ok) {
+              const pageData: any = await pageRes.json();
+              if (pageData.instagram_business_account?.id) {
+                igAccount = pageData.instagram_business_account;
+                break;
+              }
+            }
+          } catch {
+            // Ignore individual page fetch errors
+          }
+        }
+      }
+
+      if (igAccount?.id) {
+        externalAccountId = igAccount.id;
+        displayName = igAccount.username ? `@${igAccount.username}` : (igAccount.name || displayName);
+      } else if (pages.length === 0) {
         throw new Error(
-          "Tidak ditemukan akun Instagram Bisnis/Kreator yang tertaut ke Halaman Facebook Anda. Pastikan: (1) Instagram sudah diubah ke Akun Profesional, (2) sudah ditautkan ke Halaman Facebook (Facebook Page), dan (3) Halaman Facebook dicentang saat jendela izin login."
+          "Tidak ada Halaman Facebook yang terdeteksi. Saat jendela login Facebook muncul, pastikan Anda mencentang/memilih Halaman Facebook Anda (jangan klik lewati/uncheck Halaman)."
+        );
+      } else {
+        const pageNames = pages.map((p) => `"${p.name || p.id}"`).join(", ");
+        throw new Error(
+          `Ditemukan Halaman Facebook: ${pageNames}, tetapi belum ada akun Instagram Profesional yang ditautkan ke Halaman tersebut. Buka aplikasi Instagram di HP Anda -> Edit Profil -> Bagian 'Halaman' (Page) -> Tautkan ke salah satu Halaman Facebook tersebut, lalu coba hubungkan ulang.`
         );
       }
     } else if (platform === "tiktok") {

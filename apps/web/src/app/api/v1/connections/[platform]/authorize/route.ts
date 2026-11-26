@@ -77,7 +77,7 @@ export async function POST(
     authorizeUrl = `https://accounts.google.com/o/oauth2/v2/auth?${query.toString()}`;
   } else if (platform === "instagram") {
     const clientId = process.env.META_CLIENT_ID || process.env.META_APP_ID || "MOCK_META_CLIENT_ID";
-    const scopes = "instagram_basic,instagram_content_publish,pages_show_list";
+    const scopes = "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement";
 
     const query = new URLSearchParams({
       client_id: clientId,
