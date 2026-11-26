@@ -284,4 +284,28 @@ describe("TikTokPublisher — Direct Upload via Content Posting API v2", () => {
     expect(result.resolvedStatus).toBe("published");
     expect(result.externalId).toBe("v_pub_tiktok_123");
   });
+
+  it("advance step wait_status: transitions to published when PUBLISH_COMPLETE or SEND_TO_USER_INBOX", async () => {
+    for (const status of ["PUBLISH_COMPLETE", "SEND_TO_USER_INBOX"] as const) {
+      vi.mocked(mockApiClient.checkPublishStatus).mockResolvedValueOnce({ status });
+
+      const ctx = createBaseContext({
+        target: {
+          id: 3,
+          post_id: 30,
+          platform: "tiktok",
+          status: "awaiting_platform",
+          step: "wait_status",
+          attempt_count: 0,
+          external_id: "v_pub_tiktok_123",
+          external_state: {},
+          idempotency_key: "30:tiktok:v1",
+        },
+      });
+
+      const result = await publisher.advance(ctx);
+      expect(result.nextStatus).toBe("published");
+      expect(result.nextStep).toBeNull();
+    }
+  });
 });

@@ -32,7 +32,9 @@ export interface TikTokInitVideoOptions {
 
 export interface TikTokApiClient {
   getCreatorInfo(accessToken: string): Promise<TikTokCreatorInfo>;
-  initVideoUpload(opts: TikTokInitVideoOptions): Promise<{ publishId: string; uploadUrl: string }>;
+  initVideoUpload(
+    opts: TikTokInitVideoOptions
+  ): Promise<{ publishId: string; uploadUrl: string; mode?: "direct" | "direct_self_only" | "inbox_draft" }>;
   uploadVideoFile(
     uploadUrl: string,
     filePath: string,
@@ -43,7 +45,16 @@ export interface TikTokApiClient {
   checkPublishStatus(
     publishId: string,
     accessToken: string
-  ): Promise<{ status: "PROCESSING_DOWNLOAD" | "PROCESSING_UPLOAD" | "SUCCESS" | "FAILED"; failReason?: string }>;
+  ): Promise<{
+    status:
+      | "PROCESSING_DOWNLOAD"
+      | "PROCESSING_UPLOAD"
+      | "PUBLISH_COMPLETE"
+      | "SEND_TO_USER_INBOX"
+      | "SUCCESS"
+      | "FAILED";
+    failReason?: string;
+  }>;
 }
 
 const MAX_SINGLE_CHUNK_BYTES = 64 * 1024 * 1024; // 64 MB max single chunk
@@ -86,18 +97,22 @@ export class TikTokPublisher implements Publisher {
           return createStepError("invalid_file", "Ukuran file video TikTok kosong (0 byte).", { isPermanent: true });
         }
 
-        // Fetch creator info to get dynamic privacy_level_options
-        const creator = await this.apiClient.getCreatorInfo(accessToken);
-        const options = creator.privacy_level_options ?? [];
-
-        // Pick preferred privacy level (prioritize PUBLIC_TO_EVERYONE, fallback MUTUAL_FOLLOW_FRIENDS, fallback SELF_ONLY)
+        // Fetch creator info to get dynamic privacy_level_options (non-fatal if using inbox draft mode)
         let privacyLevel = "SELF_ONLY";
-        if (options.includes("PUBLIC_TO_EVERYONE")) {
-          privacyLevel = "PUBLIC_TO_EVERYONE";
-        } else if (options.includes("MUTUAL_FOLLOW_FRIENDS")) {
-          privacyLevel = "MUTUAL_FOLLOW_FRIENDS";
-        } else if (options.length > 0 && options[0]) {
-          privacyLevel = options[0];
+        try {
+          const creator = await this.apiClient.getCreatorInfo(accessToken);
+          const options = creator.privacy_level_options ?? [];
+
+          // Pick preferred privacy level (prioritize PUBLIC_TO_EVERYONE, fallback MUTUAL_FOLLOW_FRIENDS, fallback SELF_ONLY)
+          if (options.includes("PUBLIC_TO_EVERYONE")) {
+            privacyLevel = "PUBLIC_TO_EVERYONE";
+          } else if (options.includes("MUTUAL_FOLLOW_FRIENDS")) {
+            privacyLevel = "MUTUAL_FOLLOW_FRIENDS";
+          } else if (options.length > 0 && options[0]) {
+            privacyLevel = options[0];
+          }
+        } catch {
+          // Fallback safely to SELF_ONLY
         }
 
         let chunkSize = videoSize;
@@ -113,7 +128,7 @@ export class TikTokPublisher implements Publisher {
             ? `${post.caption}\n${post.hashtags}`
             : post.caption;
 
-        const { publishId, uploadUrl } = await this.apiClient.initVideoUpload({
+        const { publishId, uploadUrl, mode } = await this.apiClient.initVideoUpload({
           title: fullCaption,
           privacyLevel,
           videoSize,
@@ -130,6 +145,7 @@ export class TikTokPublisher implements Publisher {
             chunk_size: chunkSize,
             total_chunk_count: totalChunkCount,
             video_size: videoSize,
+            publish_mode: mode ?? "direct",
           },
         });
       } catch (err) {
@@ -180,7 +196,11 @@ export class TikTokPublisher implements Publisher {
       try {
         const { status, failReason } = await this.apiClient.checkPublishStatus(target.external_id, accessToken);
 
-        if (status === "SUCCESS") {
+        if (
+          status === "SUCCESS" ||
+          status === "PUBLISH_COMPLETE" ||
+          status === "SEND_TO_USER_INBOX"
+        ) {
           return createStepSuccess("published", null, {
             externalId: target.external_id,
           });
@@ -213,7 +233,11 @@ export class TikTokPublisher implements Publisher {
 
     try {
       const { status } = await this.apiClient.checkPublishStatus(target.external_id, accessToken);
-      if (status === "SUCCESS") {
+      if (
+        status === "SUCCESS" ||
+        status === "PUBLISH_COMPLETE" ||
+        status === "SEND_TO_USER_INBOX"
+      ) {
         return { resolvedStatus: "published", externalId: target.external_id };
       }
       return { resolvedStatus: "scheduled", externalId: target.external_id };

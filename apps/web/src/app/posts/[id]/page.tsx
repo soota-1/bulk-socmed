@@ -917,7 +917,7 @@ export default function PostDetailPage() {
                             ? "YouTube Shorts"
                             : target.platform === "instagram"
                             ? "Instagram Reels"
-                            : "TikTok (Buffer)"}
+                            : "TikTok"}
                         </span>
                       </div>
                     </div>
@@ -977,6 +977,13 @@ export default function PostDetailPage() {
                         Rilis: {new Date(target.published_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })} WIB
                       </div>
                     )}
+                    {isPublished &&
+                      target.platform === "tiktok" &&
+                      target.external_state?.publish_mode === "inbox_draft" && (
+                        <div className="mt-1.5 p-2 rounded-md bg-cyan-50 border border-cyan-200 text-cyan-900 text-[11px] leading-snug">
+                          Terkirim ke <strong>Draft / Kotak Masuk TikTok</strong>. Buka notifikasi di aplikasi TikTok HP Anda untuk mem-publish video.
+                        </div>
+                      )}
                   </div>
 
                   {/* Error Notification Box */}

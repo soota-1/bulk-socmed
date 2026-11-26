@@ -392,11 +392,14 @@ export class StandardTikTokApiClient implements TikTokApiClient {
     };
   }
 
-  async initVideoUpload(opts: TikTokInitVideoOptions): Promise<{ publishId: string; uploadUrl: string }> {
+  private async tryDirectVideoInit(
+    opts: TikTokInitVideoOptions,
+    privacyLevel: string
+  ): Promise<{ ok: boolean; errorCode?: string; errorMessage?: string; publishId?: string; uploadUrl?: string }> {
     const payload = {
       post_info: {
         title: opts.title,
-        privacy_level: opts.privacyLevel,
+        privacy_level: privacyLevel,
         disable_duet: false,
         disable_comment: false,
         disable_stitch: false,
@@ -419,17 +422,94 @@ export class StandardTikTokApiClient implements TikTokApiClient {
       body: JSON.stringify(payload),
     });
 
-    const data: any = await res.json();
-    if (!res.ok || (data.error && data.error.code !== "ok") || !data.data?.upload_url) {
-      throw new Error(
-        `Inisialisasi video TikTok gagal: ${data.error?.message || `HTTP ${res.status} ${res.statusText}`}`
-      );
+    const data: any = await res.json().catch(() => ({}));
+    if (res.ok && (!data.error || data.error.code === "ok") && data.data?.upload_url) {
+      return {
+        ok: true,
+        publishId: data.data.publish_id,
+        uploadUrl: data.data.upload_url,
+      };
     }
 
     return {
-      publishId: data.data.publish_id,
-      uploadUrl: data.data.upload_url,
+      ok: false,
+      errorCode: data.error?.code,
+      errorMessage: data.error?.message || `HTTP ${res.status} ${res.statusText}`,
     };
+  }
+
+  private async initInboxVideoUpload(
+    opts: TikTokInitVideoOptions
+  ): Promise<{ publishId: string; uploadUrl: string; mode: "inbox_draft" }> {
+    const inboxRes = await fetch("https://open.tiktokapis.com/v2/post/publish/inbox/video/init/", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${opts.accessToken}`,
+        "Content-Type": "application/json; charset=UTF-8",
+      },
+      body: JSON.stringify({
+        source_info: {
+          source: "FILE_UPLOAD",
+          video_size: opts.videoSize,
+          chunk_size: opts.chunkSize,
+          total_chunk_count: opts.totalChunkCount,
+        },
+      }),
+    });
+
+    const inboxData: any = await inboxRes.json().catch(() => ({}));
+    if (inboxRes.ok && (!inboxData.error || inboxData.error.code === "ok") && inboxData.data?.upload_url) {
+      return {
+        publishId: inboxData.data.publish_id,
+        uploadUrl: inboxData.data.upload_url,
+        mode: "inbox_draft",
+      };
+    }
+
+    throw new Error(
+      `Inisialisasi draft TikTok gagal (${inboxData.error?.code || inboxRes.status}): ${inboxData.error?.message || inboxRes.statusText}`
+    );
+  }
+
+  async initVideoUpload(
+    opts: TikTokInitVideoOptions
+  ): Promise<{ publishId: string; uploadUrl: string; mode?: "direct" | "direct_self_only" | "inbox_draft" }> {
+    // Default to Inbox/Draft upload so unaudited apps & public accounts succeed cleanly
+    const uploadMode = (process.env.TIKTOK_UPLOAD_MODE || "inbox").toLowerCase();
+    if (uploadMode !== "direct") {
+      return this.initInboxVideoUpload(opts);
+    }
+
+    // 1. Try direct post with requested privacy level
+    const firstTry = await this.tryDirectVideoInit(opts, opts.privacyLevel);
+    if (firstTry.ok && firstTry.publishId && firstTry.uploadUrl) {
+      return {
+        publishId: firstTry.publishId,
+        uploadUrl: firstTry.uploadUrl,
+        mode: opts.privacyLevel === "SELF_ONLY" ? "direct_self_only" : "direct",
+      };
+    }
+
+    // 2. If app is unaudited, TikTok requires SELF_ONLY privacy & Private Account (or Inbox Draft)
+    if (firstTry.errorCode === "unaudited_client_can_only_post_to_private_accounts") {
+      if (opts.privacyLevel !== "SELF_ONLY") {
+        const selfOnlyTry = await this.tryDirectVideoInit(opts, "SELF_ONLY");
+        if (selfOnlyTry.ok && selfOnlyTry.publishId && selfOnlyTry.uploadUrl) {
+          return {
+            publishId: selfOnlyTry.publishId,
+            uploadUrl: selfOnlyTry.uploadUrl,
+            mode: "direct_self_only",
+          };
+        }
+      }
+
+      // 3. Fallback to Inbox Draft Upload (/v2/post/publish/inbox/video/init/)
+      return this.initInboxVideoUpload(opts);
+    }
+
+    throw new Error(
+      `Inisialisasi video TikTok gagal (${firstTry.errorCode || "api_error"}): ${firstTry.errorMessage}`
+    );
   }
 
   async uploadVideoFile(
@@ -477,7 +557,16 @@ export class StandardTikTokApiClient implements TikTokApiClient {
   async checkPublishStatus(
     publishId: string,
     accessToken: string
-  ): Promise<{ status: "PROCESSING_DOWNLOAD" | "PROCESSING_UPLOAD" | "SUCCESS" | "FAILED"; failReason?: string }> {
+  ): Promise<{
+    status:
+      | "PROCESSING_DOWNLOAD"
+      | "PROCESSING_UPLOAD"
+      | "PUBLISH_COMPLETE"
+      | "SEND_TO_USER_INBOX"
+      | "SUCCESS"
+      | "FAILED";
+    failReason?: string;
+  }> {
     const res = await fetch("https://open.tiktokapis.com/v2/post/publish/status/fetch/", {
       method: "POST",
       headers: {
